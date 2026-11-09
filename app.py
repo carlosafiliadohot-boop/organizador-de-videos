@@ -104,33 +104,53 @@ def generate_ai_script(title, minutes, lang_label, style_choice, gemini_key=""):
         f"LOCUÇÃO: Natural, engaging narration in {lang_en} (14-19 words)."
     )
 
-    headers = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
     clean_key = gemini_key.strip() if gemini_key else ""
+    if not clean_key:
+        return "", "⚠️ O campo da chave está vazio! Cole sua chave lá no canto superior direito e aperte ENTER antes de clicar no botão."
 
-    if clean_key:
-        for model_id in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+    last_error = ""
+
+    # 1. SDK Oficial do Google GenAI (suporta chaves AQ. e AIza.)
+    try:
+        from google import genai
+        client = genai.Client(api_key=clean_key)
+        for m_name in ["gemini-2.5-flash", "gemini-2.0-flash"]:
             try:
-                g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
-                payload = {
-                    "contents": [{"parts": [{"text": prompt_text}]}],
-                    "generationConfig": {"temperature": 0.75}
-                }
-                r_gem = requests.post(g_url, json=payload, headers=headers, timeout=90)
-                if r_gem.status_code == 200:
-                    txt = r_gem.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
+                resp = client.models.generate_content(model=m_name, contents=prompt_text)
+                if resp and resp.text and len(resp.text.strip()) > 80:
+                    txt = re.sub(r"^```[a-zA-Z]*\n?", "", resp.text.strip())
                     txt = re.sub(r"\n?```$", "", txt).strip()
-                    if len(txt) > 80:
-                        return txt, None
-                elif r_gem.status_code in (400, 403):
-                    return "", f"Chave Gemini inválida ou sem permissão (Erro {r_gem.status_code}). Verifique a chave colada."
-            except Exception as e:
-                continue
+                    return txt, None
+            except Exception as e_mod:
+                last_error = str(e_mod)
+    except Exception as e_sdk:
+        last_error = str(e_sdk)
 
-    return "", (
-        "⚠️ Para gerar roteiros 100% reais e detalhados sem bloqueio no servidor do Streamlit, "
-        "cole sua Chave Gratuita do Google Gemini lá no topo direito (pegue grátis em https://aistudio.google.com/apikey)."
-    )
+    # 2. Chamada Direta via Header x-goog-api-key (compatível com tokens AQ.)
+    headers = {
+        "Content-Type": "application/json",
+        "x-goog-api-key": clean_key
+    }
+    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+        try:
+            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
+            payload = {
+                "contents": [{"parts": [{"text": prompt_text}]}],
+                "generationConfig": {"temperature": 0.75}
+            }
+            r_gem = requests.post(g_url, json=payload, headers=headers, timeout=90)
+            if r_gem.status_code == 200:
+                txt = r_gem.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
+                txt = re.sub(r"\n?```$", "", txt).strip()
+                if len(txt) > 80:
+                    return txt, None
+            else:
+                last_error = f"HTTP {r_gem.status_code}: {r_gem.text[:200]}"
+        except Exception as e_req:
+            last_error = str(e_req)
+
+    return "", f"❌ Não foi possível autenticar a chave no Google. Detalhe técnico: {last_error}"
 
 def extract_scenes_for_prompts(raw_script):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
@@ -232,10 +252,10 @@ with col_top1:
     selected_lang = st.selectbox("🌍 Idioma do Vídeo:", list(LANGUAGES.keys()))
 with col_top2:
     gemini_api_key = st.text_input(
-        "🔑 Chave Gemini Gratuita (aistudio.google.com/apikey):",
+        "🔑 Chave Gemini Gratuita (Cole e aperte ENTER):",
         value=secret_key,
         type="password",
-        placeholder="Cole aqui sua chave AIza..."
+        placeholder="Cole sua chave AQ... ou AIza... aqui"
     )
 
 tab1, tab2 = st.tabs(["📝 1. Criador de Roteiro IA & Gerador de Prompts", "🎞️ 2. Organizador e Juntador de Vídeos (Por Voz)"])
