@@ -150,7 +150,7 @@ def find_position_in_script(transcript, filename, full_spoken_norm, full_raw_nor
     return 999999, 0
 
 st.title("🎬 Organizador e Juntador Automático de Vídeos (Por Voz)")
-st.markdown("Envie o arquivo **.ZIP** baixado do Google Flow (ou os arquivos **.MP4** soltos) e cole o seu **Roteiro em Português**. O servidor escuta cada cena, coloca na ordem cronológica 100% exata e gera o vídeo completo sem consumir a memória do seu navegador.")
+st.markdown("Envie o ficheiro **.ZIP** descarregado do Google Flow (ou os ficheiros **.MP4** soltos) e cole o seu **Roteiro em Português**. O servidor escuta cada cena, coloca na ordem cronológica 100% exata e gera o vídeo completo.")
 
 col1, col2 = st.columns([1, 1])
 
@@ -163,7 +163,7 @@ with col1:
 
 with col2:
     uploaded_files = st.file_uploader(
-        "📦 2. Envie o arquivo .ZIP do Google Flow (ou selecione vários .MP4):",
+        "📦 2. Envie o ficheiro .ZIP do Google Flow (ou selecione vários .MP4):",
         type=["zip", "mp4"],
         accept_multiple_files=True
     )
@@ -172,7 +172,7 @@ if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", us
     if not roteiro_input or len(roteiro_input.strip()) < 15:
         st.error("Por favor, cole o roteiro do vídeo na caixa de texto à esquerda.")
     elif not uploaded_files:
-        st.error("Por favor, envie o arquivo .ZIP ou os vídeos .MP4.")
+        st.error("Por favor, envie o ficheiro .ZIP ou os vídeos .MP4.")
     else:
         work_dir = tempfile.mkdtemp()
         extract_dir = os.path.join(work_dir, "extraidos")
@@ -202,7 +202,7 @@ if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", us
                 mp4_files.append(target_path)
 
         if not mp4_files:
-            st.error("Nenhum vídeo .MP4 foi encontrado dentro do arquivo enviado.")
+            st.error("Nenhum vídeo .MP4 foi encontrado dentro do ficheiro enviado.")
         else:
             full_spoken_norm, full_raw_norm = parse_script_text(roteiro_input)
             recognizer = sr.Recognizer()
@@ -210,7 +210,6 @@ if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", us
             results = []
 
             progress_bar = st.progress(0, text="Iniciando reconhecimento de voz das cenas...")
-            status_box = st.empty()
 
             total = len(mp4_files)
             for idx, video_path in enumerate(mp4_files, 1):
@@ -260,7 +259,7 @@ if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", us
                 video_bytes = vf.read()
 
             st.download_button(
-                label="💾 BAIXAR VÍDEO COMPLETO EM ORDEM (.MP4)",
+                label="💾 DESCARREGAR VÍDEO COMPLETO EM ORDEM (.MP4)",
                 data=video_bytes,
                 file_name="VIDEO_FINAL_COMPLETO_EM_ORDEM.mp4",
                 mime="video/mp4",
@@ -272,4 +271,6 @@ if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", us
 
             with st.expander("📋 Ver Relatório da Ordem das Cenas e Falas Reconhecidas"):
                 for i, r in enumerate(results, 1):
-                    st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *"{r['transcript']}"*")
+                    fname_orig = r['original_name']
+                    fala_rec = r['transcript']
+                    st.write(f"**Cena {i:03d}** (`{fname_orig}`) — 🗣️ *{fala_rec}*")
