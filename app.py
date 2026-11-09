@@ -22,7 +22,7 @@ LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
         "sr_code": "pt-BR",
         "name_en": "Brazilian Portuguese (pt-BR)",
-        "end_keywords": ["grande abraco", "visitaria primeiro", "proximo video", "proximo dossie", "comente aqui", "ate a proxima"]
+        "end_keywords": ["grande abraco", "visitaria primeiro", "proximo video", "proximo dossie", "comente aqui", "ate a proxima", "qual dessas"]
     },
     "🇪🇸 Espanhol (Latino/Neutro)": {
         "sr_code": "es-MX",
@@ -81,65 +81,56 @@ def get_voice_lock(gender_choice, lang_label):
         f"characters appear on screen, the off-screen voice MUST remain the 32-year-old female mezzo-soprano narrator.]"
     )
 
-def format_ts(sec):
-    return f"{sec // 60:02d}:{sec % 60:02d}"
-
-def build_fallback_script(title, num_scenes):
-    blocks = []
-    for i in range(num_scenes):
-        ts = f"[{format_ts(i * 8)} - {format_ts((i + 1) * 8)}]"
-        if i == 0:
-            vis = "Wide cinematic aerial shot establishing the main location in bright daylight, characters silent with mouths closed"
-            loc = f"Você já parou para descobrir todos os segredos e detalhes por trás de {title} hoje?"
-        elif i == num_scenes - 1:
-            vis = "Main character smiling and waving goodbye in a clean bright setting, mouth closed and silent"
-            loc = "O que você achou dessas informações? Deixe o seu comentário aqui embaixo e até o próximo vídeo!"
-        else:
-            vis = f"Detailed cinematic scene #{i+1} illustrating {title}, smooth camera movement, characters silent with mouths closed"
-            loc = f"No destaque número {i+1} sobre {title}, vemos detalhes que transformam completamente a qualidade de vida local."
-        blocks.append(f"{ts}\n[CENA: {vis}]\nLOCUÇÃO: {loc}")
-    return "\n\n".join(blocks)
-
-def generate_ai_script(title, minutes, lang_label, gemini_key=""):
+def generate_ai_script(title, minutes, lang_label, style_choice, gemini_key=""):
     num_scenes = max(4, int((minutes * 60) // 8))
     lang_en = LANGUAGES[lang_label]["name_en"]
-    prompt_text = (
-        f"Write a complete video script about '{title}' with EXACTLY {num_scenes} scenes (8 seconds each).\n"
-        f"Format EVERY scene strictly in 3 lines separated by a blank line:\n"
-        f"[00:00 - 00:08]\n"
-        f"[CENA: Detailed visual description in English, characters with mouths closed in silence]\n"
-        f"LOCUÇÃO: Engaging narration written 100% in {lang_en} with 14 to 18 words maximum.\n"
-        f"Scene {num_scenes} must end with a Call-to-Action asking viewers to comment below."
+
+    char_hint = "the white stick figure with a blue cap exploring the real scenery" if "Palito" in style_choice else (
+        "the 3D character with a blue cap exploring the real scenery" if "Cartoon" in style_choice else "cinematic documentary footage of the real location"
     )
+
+    prompt_text = (
+        f"You are an elite YouTube documentary scriptwriter known for high-retention storytelling.\n"
+        f"Topic / Title: '{title}'\n"
+        f"Total Duration: {minutes} minute(s) -> Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
+        f"MANDATORY CONTENT & QUALITY RULES:\n"
+        f"1. REAL FACTS & SPECIFIC NAMES: Mention real places, specific beaches/cities, concrete facts, local curiosities, or real numbers. NEVER use generic filler or repetitive templates.\n"
+        f"2. NARRATIVE FLOW: Scene 1 must be a magnetic curiosity hook. Middle scenes must smoothly transition across each real item/place of '{title}' with rich details. Scene {num_scenes} must be a friendly Call-to-Action asking viewers to comment which one they liked best (and visually waving goodbye).\n"
+        f"3. STRICT TIMING PER SCENE: Every LOCUÇÃO must have between 14 and 19 words in {lang_en} so the narrator finishes speaking cleanly inside 8 seconds without rushing or cutting off.\n"
+        f"4. DISTINCT VISUALS: Every [CENA: ...] must describe a unique, vivid visual action in English featuring {char_hint}, explicitly keeping all mouths closed in silence and zero text on screen.\n\n"
+        f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, no intro/outro text):\n"
+        f"[00:00 - 00:08]\n"
+        f"[CENA: Specific visual action in English, characters silent with mouths closed, no text]\n"
+        f"LOCUÇÃO: Natural, engaging narration in {lang_en} (14-19 words)."
+    )
+
     headers = {"User-Agent": "Mozilla/5.0", "Content-Type": "application/json"}
+    clean_key = gemini_key.strip() if gemini_key else ""
 
-    if gemini_key and len(gemini_key.strip()) > 10:
-        try:
-            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key={gemini_key.strip()}"
-            r_gem = requests.post(g_url, json={"contents": [{"parts": [{"text": prompt_text}]}]}, headers=headers, timeout=60)
-            if r_gem.status_code == 200:
-                txt = r_gem.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                if len(txt) > 60:
-                    return txt
-        except Exception:
-            pass
+    if clean_key:
+        for model_id in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-1.5-flash"]:
+            try:
+                g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
+                payload = {
+                    "contents": [{"parts": [{"text": prompt_text}]}],
+                    "generationConfig": {"temperature": 0.75}
+                }
+                r_gem = requests.post(g_url, json=payload, headers=headers, timeout=90)
+                if r_gem.status_code == 200:
+                    txt = r_gem.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
+                    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
+                    txt = re.sub(r"\n?```$", "", txt).strip()
+                    if len(txt) > 80:
+                        return txt, None
+                elif r_gem.status_code in (400, 403):
+                    return "", f"Chave Gemini inválida ou sem permissão (Erro {r_gem.status_code}). Verifique a chave colada."
+            except Exception as e:
+                continue
 
-    for m_name in ["openai", "mistral"]:
-        try:
-            r1 = requests.post(
-                "https://text.pollinations.ai/openai",
-                headers=headers,
-                json={"model": m_name, "messages": [{"role": "user", "content": prompt_text}]},
-                timeout=45
-            )
-            if r1.status_code == 200:
-                txt = r1.json()["choices"][0]["message"]["content"].strip()
-                if len(txt) > 60:
-                    return txt
-        except Exception:
-            pass
-
-    return build_fallback_script(title, num_scenes)
+    return "", (
+        "⚠️ Para gerar roteiros 100% reais e detalhados sem bloqueio no servidor do Streamlit, "
+        "cole sua Chave Gratuita do Google Gemini lá no topo direito (pegue grátis em https://aistudio.google.com/apikey)."
+    )
 
 def extract_scenes_for_prompts(raw_script):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
@@ -230,41 +221,56 @@ def find_position_in_script(transcript, full_spoken_norm, lang_label):
 
 st.title("🎬 Estúdio Completo Google Flow — Roteiro IA, Multi-Idiomas & Montagem")
 
+secret_key = ""
+try:
+    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+except Exception:
+    secret_key = ""
+
 col_top1, col_top2 = st.columns([2, 1])
 with col_top1:
     selected_lang = st.selectbox("🌍 Idioma do Vídeo:", list(LANGUAGES.keys()))
 with col_top2:
-    gemini_api_key = st.text_input("🔑 Chave Gemini Gratuita (Opcional):", type="password")
+    gemini_api_key = st.text_input(
+        "🔑 Chave Gemini Gratuita (aistudio.google.com/apikey):",
+        value=secret_key,
+        type="password",
+        placeholder="Cole aqui sua chave AIza..."
+    )
 
 tab1, tab2 = st.tabs(["📝 1. Criador de Roteiro IA & Gerador de Prompts", "🎞️ 2. Organizador e Juntador de Vídeos (Por Voz)"])
 
 with tab1:
-    st.markdown("### 🤖 Opção A: Gerar Roteiro Completo Pelo Título")
+    st.markdown("### 🤖 Opção A: Gerar Roteiro Profissional Pelo Título")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Digite o Título ou Tema do Vídeo:", placeholder="Ex: 5 Cidades Mais Baratas de Minas Gerais")
+        video_title = st.text_input("Digite o Título ou Tema do Vídeo:", placeholder="Ex: 3 Praias Paradisíacas do Nordeste")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=1, step=1)
     with col_t3:
         total_scenes_calc = int((duration_min * 60) // 8)
         st.metric("Total de Cenas (8s)", f"{total_scenes_calc} cenas")
 
-    if st.button("🪄 CRIAR ROTEIRO COMPLETO AUTOMATICAMENTE", use_container_width=True):
-        if not video_title.strip():
-            st.warning("Digite um título ou tema para o vídeo primeiro.")
-        else:
-            with st.spinner(f"Criando roteiro de {duration_min} min ({total_scenes_calc} cenas) em {selected_lang}..."):
-                st.session_state["saved_script"] = generate_ai_script(video_title, duration_min, selected_lang, gemini_api_key)
-
-    st.divider()
-    st.markdown("### 🎙️ Opção B: Configurar Voz, Estilo e Gerar Prompts")
     c1, c2 = st.columns([1, 1])
     with c1:
         voice_choice = st.radio("Gênero da Voz do Narrador:", ["🎙️ Voz Masculina Fixa (Locutor Documentário)", "🎙️ Voz Feminina Fixa (Locutora Documentário)"])
         style_choice = st.selectbox("Estilo Visual e Personagem Fixo:", list(STYLE_PRESETS.keys()))
         custom_style = st.text_input("Descreva o estilo personalizado:") if style_choice == "Personalizado (Definir abaixo)" else ""
+
+    if st.button("🪄 CRIAR ROTEIRO COMPLETO AUTOMATICAMENTE", use_container_width=True):
+        if not video_title.strip():
+            st.warning("Digite um título ou tema para o vídeo primeiro.")
+        else:
+            with st.spinner(f"Escrevendo roteiro real e detalhado de {duration_min} min ({total_scenes_calc} cenas) em {selected_lang}..."):
+                script_out, err_msg = generate_ai_script(video_title, duration_min, selected_lang, style_choice, gemini_api_key)
+                if err_msg:
+                    st.error(err_msg)
+                else:
+                    st.session_state["saved_script"] = script_out
+                    st.success("✅ Roteiro real gerado com sucesso!")
+
     with c2:
-        script_for_prompts = st.text_area("Roteiro Completo:", value=st.session_state["saved_script"], height=260)
+        script_for_prompts = st.text_area("Roteiro Completo (Editável):", value=st.session_state["saved_script"], height=260)
 
     if st.button("✨ GERAR TODOS OS PROMPTS COM TRAVA DE VOZ E IDIOMA", type="primary", use_container_width=True):
         if not script_for_prompts.strip():
