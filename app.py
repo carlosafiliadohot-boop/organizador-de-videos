@@ -1,6 +1,5 @@
 import os
 import re
-import glob
 import shutil
 import zipfile
 import tempfile
@@ -14,10 +13,13 @@ import imageio_ffmpeg
 FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
 
 st.set_page_config(
-    page_title="Organizador & Juntador Google Flow",
+    page_title="Estúdio Completo Google Flow",
     page_icon="🎬",
     layout="wide"
 )
+
+if "saved_script" not in st.session_state:
+    st.session_state["saved_script"] = ""
 
 VISUAL_KEYWORDS = {
     "rua": ["street", "road", "walking", "houses", "flowers"],
@@ -45,6 +47,65 @@ VISUAL_KEYWORDS = {
     "sao lourenco": ["balloon", "pedal", "bamboo", "bambu"],
     "pocos de caldas": ["volcano", "crater", "vulcao", "cratera", "clock", "floral"]
 }
+
+STYLE_PRESETS = {
+    "Boneco Palito 2D (Com Boné Azul)": (
+        "2D minimalist vector animation, clean flat illustration style. "
+        "Main character is the EXACT SAME simple white stick figure wearing a blue baseball cap, "
+        "expressive eyes, mouth closed and silent (no lip-sync), no on-screen text or letters."
+    ),
+    "Cartoon 3D Pixar (Boneco Boné Azul)": (
+        "3D Pixar-style animated illustration, vibrant colors, soft cinematic lighting. "
+        "Main character is the EXACT SAME friendly 3D stylized character wearing a blue baseball cap "
+        "and casual jeans, mouth closed and silent (no lip-sync), no on-screen text or signs."
+    ),
+    "Cinematográfico Realista 4K (Documentário)": (
+        "Photorealistic 4K documentary footage, cinematic drone and gimbal camera movement, "
+        "natural daylight, ultra-detailed Brazilian town scenery. Any people on screen have "
+        "their mouths closed and are silent (no lip-sync), no text overlays or gibberish signs."
+    ),
+    "Personalizado (Definir abaixo)": ""
+}
+
+VOICE_LOCKS = {
+    "🎙️ Voz Masculina Fixa (Locutor Documentário)": (
+        "[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 35-year-old Brazilian male narrator "
+        "with a warm, deep, clear baritone documentary voice, native Brazilian Portuguese (pt-BR), steady 140 WPM pace, "
+        "clean studio condenser microphone, zero vocal variation between scenes. Even if female, elderly, or child "
+        "characters appear on screen, the off-screen voice MUST remain the 35-year-old male baritone narrator.]"
+    ),
+    "🎙️ Voz Feminina Fixa (Locutora Documentário)": (
+        "[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 32-year-old Brazilian female narrator "
+        "with a warm, smooth, clear mezzo-soprano documentary voice, native Brazilian Portuguese (pt-BR), steady 140 WPM pace, "
+        "clean studio condenser microphone, zero vocal variation between scenes. Even if male, elderly, or child "
+        "characters appear on screen, the off-screen voice MUST remain the 32-year-old female mezzo-soprano narrator.]"
+    )
+}
+
+def extract_scenes_for_prompts(raw_script):
+    blocks = re.split(r'\n\s*\n', raw_script.strip())
+    scenes = []
+    for block in blocks:
+        lines = [l.strip() for l in block.splitlines() if l.strip()]
+        if not lines:
+            continue
+        visual = ""
+        spoken = ""
+        for line in lines:
+            m_cena = re.search(r'\[?CENA\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
+            m_loc = re.search(r'(?:LOCU[ÇC][ÃA]O|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+            if m_cena:
+                visual = m_cena.group(1).strip()
+            elif m_loc:
+                spoken = m_loc.group(1).strip()
+            elif not re.match(r'^\[\d+:\d+', line):
+                if not spoken:
+                    spoken = line
+        if spoken or visual:
+            if not visual:
+                visual = "Cenário brasileiro detalhado acompanhando a narração, personagens de boca fechada em silêncio"
+            scenes.append({"visual": visual, "spoken": spoken})
+    return scenes
 
 def normalize_text(text):
     if not text:
@@ -149,128 +210,194 @@ def find_position_in_script(transcript, filename, full_spoken_norm, full_raw_nor
 
     return 999999, 0
 
-st.title("🎬 Organizador e Juntador Automático de Vídeos (Por Voz)")
-st.markdown("Envie o ficheiro **.ZIP** descarregado do Google Flow (ou os ficheiros **.MP4** soltos) e cole o seu **Roteiro em Português**. O servidor escuta cada cena, coloca na ordem cronológica 100% exata e gera o vídeo completo.")
+st.title("🎬 Estúdio Completo Google Flow — Prompts & Montagem Automática")
 
-col1, col2 = st.columns([1, 1])
+tab1, tab2 = st.tabs([
+    "📝 1. Gerador de Prompts (Com Trava de Voz e Personagem)",
+    "🎞️ 2. Organizador e Juntador de Vídeos (Por Voz)"
+])
 
-with col1:
-    roteiro_input = st.text_area(
-        "📜 1. Cole o Roteiro Completo Aqui:",
-        height=320,
-        placeholder="Cole aqui o seu roteiro com [CENA: ...] e LOCUÇÃO: ..."
-    )
+with tab1:
+    st.subheader("Fatiador de Roteiro e Gerador de Prompts para o Google Flow")
+    c1, c2 = st.columns([1, 1])
 
-with col2:
-    uploaded_files = st.file_uploader(
-        "📦 2. Envie o ficheiro .ZIP do Google Flow (ou selecione vários .MP4):",
-        type=["zip", "mp4"],
-        accept_multiple_files=True
-    )
+    with c1:
+        voice_choice = st.radio(
+            "Selecione o Gênero da Voz do Narrador (Mesma voz do início ao fim):",
+            list(VOICE_LOCKS.keys())
+        )
+        style_choice = st.selectbox(
+            "Estilo Visual e Personagem Fixo:",
+            list(STYLE_PRESETS.keys())
+        )
+        custom_style = ""
+        if style_choice == "Personalizado (Definir abaixo)":
+            custom_style = st.text_input(
+                "Descreva o estilo visual ou personagem fixo:",
+                placeholder="Ex: Homem mineiro de 35 anos, camisa xadrez, realista 4K, boca fechada..."
+            )
 
-if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", use_container_width=True):
-    if not roteiro_input or len(roteiro_input.strip()) < 15:
-        st.error("Por favor, cole o roteiro do vídeo na caixa de texto à esquerda.")
-    elif not uploaded_files:
-        st.error("Por favor, envie o ficheiro .ZIP ou os vídeos .MP4.")
-    else:
-        work_dir = tempfile.mkdtemp()
-        extract_dir = os.path.join(work_dir, "extraidos")
-        ordered_dir = os.path.join(work_dir, "ordenados")
-        os.makedirs(extract_dir, exist_ok=True)
-        os.makedirs(ordered_dir, exist_ok=True)
+    with c2:
+        script_for_prompts = st.text_area(
+            "Cole o Roteiro Completo Aqui:",
+            height=240,
+            placeholder="[00:00 - 00:08]\n[CENA: ...]\nLOCUÇÃO: ..."
+        )
 
-        mp4_files = []
-        for uf in uploaded_files:
-            if uf.name.lower().endswith(".zip"):
-                zip_path = os.path.join(work_dir, uf.name)
-                with open(zip_path, "wb") as f:
-                    f.write(uf.getbuffer())
-                with zipfile.ZipFile(zip_path, 'r') as z:
-                    for member in z.namelist():
-                        if member.lower().endswith('.mp4') and not member.startswith('__MACOSX'):
-                            filename = os.path.basename(member)
-                            if filename:
-                                target_path = os.path.join(extract_dir, filename)
-                                with z.open(member) as source, open(target_path, 'wb') as target:
-                                    shutil.copyfileobj(source, target)
-                                mp4_files.append(target_path)
-            elif uf.name.lower().endswith(".mp4"):
-                target_path = os.path.join(extract_dir, uf.name)
-                with open(target_path, "wb") as f:
-                    f.write(uf.getbuffer())
-                mp4_files.append(target_path)
-
-        if not mp4_files:
-            st.error("Nenhum vídeo .MP4 foi encontrado dentro do ficheiro enviado.")
+    if st.button("✨ GERAR TODOS OS PROMPTS COM TRAVA DE VOZ", type="primary", use_container_width=True):
+        if not script_for_prompts.strip():
+            st.warning("Cole o roteiro acima para gerar os prompts.")
         else:
-            full_spoken_norm, full_raw_norm = parse_script_text(roteiro_input)
-            recognizer = sr.Recognizer()
-            temp_wav = os.path.join(work_dir, "_temp.wav")
-            results = []
+            st.session_state["saved_script"] = script_for_prompts
+            scenes = extract_scenes_for_prompts(script_for_prompts)
+            visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
+            voice_anchor = VOICE_LOCKS[voice_choice]
 
-            progress_bar = st.progress(0, text="Iniciando reconhecimento de voz das cenas...")
+            st.success(f"✅ {len(scenes)} Cenas geradas com trava de voz! (O roteiro já foi copiado automaticamente para a Aba 2).")
 
-            total = len(mp4_files)
-            for idx, video_path in enumerate(mp4_files, 1):
-                fname = os.path.basename(video_path)
-                transcript = transcribe_video_audio(video_path, recognizer, temp_wav)
-                pos, score = find_position_in_script(transcript, fname, full_spoken_norm, full_raw_norm)
-                results.append({
-                    'path': video_path,
-                    'original_name': fname,
-                    'transcript': transcript,
-                    'position': pos,
-                    'score': score
-                })
-                progress_bar.progress(idx / total, text=f"Escutando cena {idx}/{total}: '{transcript[:50]}...'")
-
-            results.sort(key=lambda x: (x['position'], x['original_name']))
-
-            concat_list_path = os.path.join(ordered_dir, 'lista_uniao.txt')
-            with open(concat_list_path, 'w', encoding='utf-8') as cf:
-                for scene_num, item in enumerate(results, 1):
-                    new_name = f"Cena_{scene_num:03d}.mp4"
-                    new_path = os.path.join(ordered_dir, new_name)
-                    shutil.copy2(item['path'], new_path)
-                    safe_path = new_path.replace('\\', '/')
-                    cf.write(f"file '{safe_path}'\n")
-
-            output_master = os.path.join(work_dir, "VIDEO_FINAL_COMPLETO_EM_ORDEM.mp4")
-            progress_bar.progress(1.0, text="Unindo todas as cenas no vídeo final...")
-
-            cmd_concat = [
-                FFMPEG_EXE, '-y', '-f', 'concat', '-safe', '0',
-                '-i', concat_list_path, '-c', 'copy', output_master
-            ]
-            res = subprocess.run(cmd_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            if res.returncode != 0 or not os.path.exists(output_master):
-                cmd_concat_reencode = [
-                    FFMPEG_EXE, '-y', '-f', 'concat', '-safe', '0',
-                    '-i', concat_list_path, '-c:v', 'libx264', '-preset', 'ultrafast',
-                    '-c:a', 'aac', '-b:a', '192k', output_master
-                ]
-                subprocess.run(cmd_concat_reencode, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-            st.success(f"✅ Vídeo unido com sucesso! ({len(results)} cenas organizadas cronologicamente)")
-
-            with open(output_master, "rb") as vf:
-                video_bytes = vf.read()
+            all_prompts_text = []
+            for idx, sc in enumerate(scenes, 1):
+                prompt_box = (
+                    f"[VISUAL STYLE & CHARACTER LOCK: {visual_anchor} "
+                    f"CRITICAL RULE: All characters on screen MUST keep their mouths closed and silent (strictly no lip-sync, no talking on camera). "
+                    f"Zero text, zero letters, zero signs on screen.]\n"
+                    f"SCENE ACTION: {sc['visual']}.\n"
+                    f"{voice_anchor} Narrator says in Brazilian Portuguese: \"{sc['spoken']}\""
+                )
+                all_prompts_text.append(f"=== CENA {idx:03d} ===\n{prompt_box}\n")
+                with st.expander(f"🎬 Cena {idx:03d} — \"{sc['spoken'][:65]}...\"", expanded=(idx <= 3)):
+                    st.code(prompt_box, language="text")
 
             st.download_button(
-                label="💾 DESCARREGAR VÍDEO COMPLETO EM ORDEM (.MP4)",
-                data=video_bytes,
-                file_name="VIDEO_FINAL_COMPLETO_EM_ORDEM.mp4",
-                mime="video/mp4",
-                type="primary",
+                "📥 Baixar Todos os Prompts em um Arquivo (.TXT)",
+                data="\n".join(all_prompts_text),
+                file_name="Prompts_Google_Flow_Voz_Fixa.txt",
+                mime="text/plain",
                 use_container_width=True
             )
 
-            st.video(video_bytes)
+with tab2:
+    st.subheader("Organizador e Juntador Automático de Vídeos por Reconhecimento de Voz")
+    col1, col2 = st.columns([1, 1])
 
-            with st.expander("📋 Ver Relatório da Ordem das Cenas e Falas Reconhecidas"):
-                for i, r in enumerate(results, 1):
-                    fname_orig = r['original_name']
-                    fala_rec = r['transcript']
-                    st.write(f"**Cena {i:03d}** (`{fname_orig}`) — 🗣️ *{fala_rec}*")
+    with col1:
+        roteiro_input = st.text_area(
+            "📜 1. Roteiro Completo do Vídeo:",
+            value=st.session_state["saved_script"],
+            height=300,
+            placeholder="Cole aqui o seu roteiro com [CENA: ...] e LOCUÇÃO: ..."
+        )
+
+    with col2:
+        uploaded_files = st.file_uploader(
+            "📦 2. Envie o arquivo .ZIP do Google Flow (ou selecione vários .MP4):",
+            type=["zip", "mp4"],
+            accept_multiple_files=True
+        )
+
+    if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", use_container_width=True):
+        if not roteiro_input or len(roteiro_input.strip()) < 15:
+            st.error("Por favor, cole o roteiro do vídeo na caixa de texto à esquerda.")
+        elif not uploaded_files:
+            st.error("Por favor, envie o arquivo .ZIP ou os vídeos .MP4.")
+        else:
+            work_dir = tempfile.mkdtemp()
+            extract_dir = os.path.join(work_dir, "extraidos")
+            ordered_dir = os.path.join(work_dir, "ordenados")
+            os.makedirs(extract_dir, exist_ok=True)
+            os.makedirs(ordered_dir, exist_ok=True)
+
+            mp4_files = []
+            for uf in uploaded_files:
+                if uf.name.lower().endswith(".zip"):
+                    zip_path = os.path.join(work_dir, uf.name)
+                    with open(zip_path, "wb") as f:
+                        f.write(uf.getbuffer())
+                    with zipfile.ZipFile(zip_path, 'r') as z:
+                        for member in z.namelist():
+                            if member.lower().endswith('.mp4') and not member.startswith('__MACOSX'):
+                                filename = os.path.basename(member)
+                                if filename:
+                                    target_path = os.path.join(extract_dir, filename)
+                                    with z.open(member) as source, open(target_path, 'wb') as target:
+                                        shutil.copyfileobj(source, target)
+                                    mp4_files.append(target_path)
+                elif uf.name.lower().endswith(".mp4"):
+                    target_path = os.path.join(extract_dir, uf.name)
+                    with open(target_path, "wb") as f:
+                        f.write(uf.getbuffer())
+                    mp4_files.append(target_path)
+
+            if not mp4_files:
+                st.error("Nenhum vídeo .MP4 foi encontrado dentro do arquivo enviado.")
+            else:
+                full_spoken_norm, full_raw_norm = parse_script_text(roteiro_input)
+                recognizer = sr.Recognizer()
+                temp_wav = os.path.join(work_dir, "_temp.wav")
+                results = []
+
+                progress_bar = st.progress(0, text="Iniciando reconhecimento de voz das cenas...")
+
+                total = len(mp4_files)
+                for idx, video_path in enumerate(mp4_files, 1):
+                    fname = os.path.basename(video_path)
+                    transcript = transcribe_video_audio(video_path, recognizer, temp_wav)
+                    pos, score = find_position_in_script(transcript, fname, full_spoken_norm, full_raw_norm)
+                    results.append({
+                        'path': video_path,
+                        'original_name': fname,
+                        'transcript': transcript,
+                        'position': pos,
+                        'score': score
+                    })
+                    progress_bar.progress(idx / total, text=f"Escutando cena {idx}/{total}: '{transcript[:50]}...'")
+
+                results.sort(key=lambda x: (x['position'], x['original_name']))
+
+                concat_list_path = os.path.join(ordered_dir, 'lista_uniao.txt')
+                with open(concat_list_path, 'w', encoding='utf-8') as cf:
+                    for scene_num, item in enumerate(results, 1):
+                        new_name = f"Cena_{scene_num:03d}.mp4"
+                        new_path = os.path.join(ordered_dir, new_name)
+                        shutil.copy2(item['path'], new_path)
+                        safe_path = new_path.replace('\\', '/')
+                        cf.write(f"file '{safe_path}'\n")
+
+                output_master = os.path.join(work_dir, "VIDEO_FINAL_COMPLETO_EM_ORDEM.mp4")
+                progress_bar.progress(1.0, text="Unindo todas as cenas no vídeo final...")
+
+                cmd_concat = [
+                    FFMPEG_EXE, '-y', '-f', 'concat', '-safe', '0',
+                    '-i', concat_list_path, '-c', 'copy', output_master
+                ]
+                res = subprocess.run(cmd_concat, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                if res.returncode != 0 or not os.path.exists(output_master):
+                    cmd_concat_reencode = [
+                        FFMPEG_EXE, '-y', '-f', 'concat', '-safe', '0',
+                        '-i', concat_list_path, '-c:v', 'libx264', '-preset', 'ultrafast',
+                        '-c:a', 'aac', '-b:a', '192k', output_master
+                    ]
+                    subprocess.run(cmd_concat_reencode, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                st.success(f"✅ Vídeo unido com sucesso! ({len(results)} cenas organizadas cronologicamente)")
+
+                with open(output_master, "rb") as vf:
+                    video_bytes = vf.read()
+
+                st.download_button(
+                    label="💾 BAIXAR VÍDEO COMPLETO EM ORDEM (.MP4)",
+                    data=video_bytes,
+                    file_name="VIDEO_FINAL_COMPLETO_EM_ORDEM.mp4",
+                    mime="video/mp4",
+                    type="primary",
+                    use_container_width=True
+                )
+
+                st.video(video_bytes)
+
+                with st.expander("📋 Ver Relatório da Ordem das Cenas e Falas Reconhecidas"):
+                    for i, r in enumerate(results, 1):
+                        fname_orig = r['original_name']
+                        fala_rec = r['transcript']
+                        st.write(f"**Cena {i:03d}** (`{fname_orig}`) — 🗣️ *{fala_rec}*")
