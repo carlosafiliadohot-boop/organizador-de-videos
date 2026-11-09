@@ -1,6 +1,8 @@
 import os
+import io
 import re
 import math
+import base64
 import shutil
 import zipfile
 import tempfile
@@ -16,10 +18,32 @@ def get_ffmpeg():
     import imageio_ffmpeg
     return imageio_ffmpeg.get_ffmpeg_exe()
 
+DEFAULT_CHAR_A = (
+    "52-year-old Brazilian rural father, tanned weathered skin, square jaw, clean-shaven cheeks with a thick "
+    "neatly trimmed dark-gray mustache, wearing a beige woven straw hat with a thin brown leather band and "
+    "a solid navy-blue cotton button-up shirt with sleeves rolled to the elbows"
+)
+DEFAULT_CHAR_B = (
+    "22-year-old Brazilian young woman, warm olive skin, oval face, expressive dark brown eyes, shoulder-length "
+    "defined dark brown curly hair worn loose, wearing a solid mustard-yellow ribbed t-shirt under a classic "
+    "medium-blue denim jacket, small silver stud earrings"
+)
+DEFAULT_SINGLE_CHAR = ""
+
 if "saved_script" not in st.session_state:
     st.session_state["saved_script"] = ""
 if "auto_duration_min" not in st.session_state:
     st.session_state["auto_duration_min"] = 1
+if "dna_char_a" not in st.session_state:
+    st.session_state["dna_char_a"] = DEFAULT_CHAR_A
+if "dna_char_b" not in st.session_state:
+    st.session_state["dna_char_b"] = DEFAULT_CHAR_B
+if "dna_single_char" not in st.session_state:
+    st.session_state["dna_single_char"] = DEFAULT_SINGLE_CHAR
+if "voice_char_a" not in st.session_state:
+    st.session_state["voice_char_a"] = "Deep, gruff, protective 52-year-old rural male baritone voice (105 Hz), calm interior Minas Gerais cadence"
+if "voice_char_b" not in st.session_state:
+    st.session_state["voice_char_b"] = "Clear, bright, natural 22-year-old young female voice (210 Hz), expressive Brazilian cadence"
 
 LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
@@ -50,20 +74,18 @@ LANGUAGES = {
 }
 
 STYLE_PRESETS = {
-    "Boneco Palito 2D (Com Boné Azul)": (
-        "2D minimalist vector animation, clean flat illustration style. "
-        "Single continuous camera shot, zero scene cuts, zero morphing. "
-        "Consistent simple white stick figure characters, expressive eyes, zero text, zero banners, zero letters."
-    ),
-    "Cartoon 3D Pixar (Boneco Boné Azul)": (
-        "3D Pixar-style animated illustration, vibrant colors, soft cinematic lighting. "
-        "Single continuous camera shot, zero scene cuts, zero morphing. "
-        "Consistent stylized 3D characters, zero text, zero banners, zero signs."
-    ),
     "Cinematográfico Realista 4K": (
-        "Photorealistic 4K cinema footage, single continuous smooth gimbal or drone camera movement, "
-        "zero scene cuts, zero morphing, natural daylight, ultra-detailed scenery. "
-        "Zero text overlays, zero banners, zero ribbons, zero signs."
+        "Photorealistic 4K cinema footage, ARRI Alexa look, 50mm prime lens, shallow depth of field, "
+        "single continuous smooth camera shot, zero scene cuts, zero morphing, natural warm lighting. "
+        "Zero text overlays, zero banners, zero signs."
+    ),
+    "Cartoon 3D Pixar": (
+        "3D Pixar-style animated feature film look, vibrant colors, soft global illumination lighting, "
+        "single continuous camera shot, zero scene cuts, zero morphing, zero text, zero signs."
+    ),
+    "Boneco Palito 2D (Com Boné Azul)": (
+        "2D minimalist vector animation, clean flat illustration style, single continuous camera shot, "
+        "zero scene cuts, consistent simple white stick figure characters, expressive eyes, zero text, zero letters."
     ),
     "Personalizado (Definir abaixo)": ""
 }
@@ -101,15 +123,156 @@ def get_strict_voice_lock(gender_choice, lang_label, custom_voice_desc=""):
         return (
             f"[STRICT ACOUSTIC VOICEPRINT LOCK: Off-screen studio narration by the EXACT SAME 35-year-old male narrator "
             f"across all scenes. Vocal profile: warm chest-resonant baritone (115 Hz fundamental pitch), crystal-clear native {lang_en}, "
-            f"steady 140 WPM documentary cadence, close-mic Neumann U87 condenser sound, dry studio acoustics, ZERO background music, "
-            f"ZERO pitch shift or accent drift.{extra} Even if women, children, or elders appear on screen, the voice MUST remain this exact 35-year-old man.]"
+            f"steady 140 WPM documentary cadence, close-mic Neumann U87 sound, 0.3s clean silence before speaking, ZERO whispers or sighs, "
+            f"ZERO background music.{extra} Even if women, children, or elders appear on screen, the voice MUST remain this exact 35-year-old man.]"
         )
     return (
         f"[STRICT ACOUSTIC VOICEPRINT LOCK: Off-screen studio narration by the EXACT SAME 32-year-old female narrator "
         f"across all scenes. Vocal profile: warm smooth mezzo-soprano (195 Hz fundamental pitch), crystal-clear native {lang_en}, "
-        f"steady 140 WPM documentary cadence, close-mic Neumann U87 condenser sound, dry studio acoustics, ZERO background music, "
-        f"ZERO pitch shift or accent drift.{extra} Even if men, children, or elders appear on screen, the voice MUST remain this exact 32-year-old woman.]"
+        f"steady 140 WPM documentary cadence, close-mic Neumann U87 sound, 0.3s clean silence before speaking, ZERO whispers or sighs, "
+        f"ZERO background music.{extra} Even if men, children, or elders appear on screen, the voice MUST remain this exact 32-year-old woman.]"
     )
+
+def clean_markdown(txt):
+    txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL).strip()
+    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
+    return re.sub(r"\n?```$", "", txt).strip()
+
+def get_available_groq_models(clean_key, vision_only=False):
+    headers_groq = {"Authorization": f"Bearer {clean_key}"}
+    try:
+        r_m = requests.get("https://api.groq.com/openai/v1/models", headers=headers_groq, timeout=15)
+        if r_m.status_code == 200:
+            raw_ids = [m["id"] for m in r_m.json().get("data", []) if "id" in m]
+            skip_words = ("whisper", "guard", "tts", "playai", "orpheus", "embed", "safeguard", "allam")
+            chat_models = [mid for mid in raw_ids if not any(sw in mid.lower() for sw in skip_words)]
+
+            if vision_only:
+                vis_models = [
+                    mid for mid in chat_models
+                    if any(vk in mid.lower() for vk in ("llama-4", "scout", "maverick", "vision"))
+                ]
+                if vis_models:
+                    return vis_models
+
+            def rank_model(m_id):
+                ml = m_id.lower()
+                if "llama-4" in ml or "maverick" in ml or "scout" in ml:
+                    return 0
+                if "70b" in ml or "qwen" in ml:
+                    return 1
+                if "llama" in ml:
+                    return 2
+                return 3
+
+            chat_models.sort(key=rank_model)
+            if chat_models:
+                return chat_models
+    except Exception:
+        pass
+    if vision_only:
+        return ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
+    return ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen-qwq-32b", "gemma2-9b-it"]
+
+def analyze_character_photo(uploaded_img, api_key):
+    clean_key = api_key.strip() if api_key else ""
+    if not clean_key:
+        return None, "Cole sua chave gratuita da Groq (gsk_...) lá no topo primeiro para analisar a foto!"
+
+    img_bytes = uploaded_img.getvalue()
+    mime_type = uploaded_img.type or "image/jpeg"
+    try:
+        from PIL import Image
+        im = Image.open(io.BytesIO(img_bytes)).convert("RGB")
+        im.thumbnail((1024, 1024))
+        buf = io.BytesIO()
+        im.save(buf, format="JPEG", quality=88)
+        img_bytes = buf.getvalue()
+        mime_type = "image/jpeg"
+    except Exception:
+        pass
+
+    b64_data = base64.b64encode(img_bytes).decode("utf-8")
+    vision_prompt = (
+        "Analyze this character image and write a forensic, ultra-specific physical and clothing description in ONE concise "
+        "English sentence (40 to 60 words) designed to lock 100% visual identity across AI video scenes. "
+        "Include: exact apparent age, ethnicity/skin tone, face shape, eye details, exact hairstyle/color, exact facial hair "
+        "(clean-shaven, mustache only, or beard length), headwear if any, and exact clothing colors, fabrics, collar/sleeve details, "
+        "and accessories. Output ONLY the English description without intro text."
+    )
+
+    last_err = ""
+    if clean_key.startswith("gsk_"):
+        headers_groq = {"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json"}
+        for v_mod in get_available_groq_models(clean_key, vision_only=True)[:4]:
+            try:
+                r_v = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers_groq,
+                    json={
+                        "model": v_mod,
+                        "messages": [
+                            {
+                                "role": "user",
+                                "content": [
+                                    {"type": "text", "text": vision_prompt},
+                                    {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_data}"}}
+                                ]
+                            }
+                        ],
+                        "temperature": 0.1,
+                        "max_tokens": 300
+                    },
+                    timeout=45
+                )
+                if r_v.status_code == 200:
+                    desc = clean_markdown(r_v.json()["choices"][0]["message"]["content"])
+                    if len(desc) > 20:
+                        return desc, None
+                else:
+                    last_err = f"{v_mod}: HTTP {r_v.status_code}"
+            except Exception as ex:
+                last_err = str(ex)
+        return None, f"Não foi possível ler a imagem ({last_err})."
+
+    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+        try:
+            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
+            payload = {
+                "contents": [{
+                    "parts": [
+                        {"text": vision_prompt},
+                        {"inline_data": {"mime_type": mime_type, "data": b64_data}}
+                    ]
+                }]
+            }
+            r_g = requests.post(g_url, json=payload, timeout=45)
+            if r_g.status_code == 200:
+                desc = clean_markdown(r_g.json()["candidates"][0]["content"]["parts"][0]["text"])
+                if len(desc) > 20:
+                    return desc, None
+            else:
+                last_err = f"HTTP {r_g.status_code}"
+        except Exception as ex:
+            last_err = str(ex)
+    return None, f"Falha ao analisar foto: {last_err}"
+
+def build_duo_reference_card(img_a_file, img_b_file):
+    try:
+        from PIL import Image
+        canvas = Image.new("RGB", (1280, 720), (240, 238, 232))
+        for idx, f_obj in enumerate([img_a_file, img_b_file]):
+            if f_obj is not None:
+                im = Image.open(io.BytesIO(f_obj.getvalue())).convert("RGB")
+                im.thumbnail((610, 680))
+                x_off = (idx * 640) + (640 - im.width) // 2
+                y_off = (720 - im.height) // 2
+                canvas.paste(im, (x_off, y_off))
+        out_buf = io.BytesIO()
+        canvas.save(out_buf, format="PNG")
+        return out_buf.getvalue()
+    except Exception:
+        return None
 
 def get_audio_duration_sec(audio_path, ffmpeg_exe):
     res = subprocess.run([ffmpeg_exe, '-i', audio_path], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
@@ -118,7 +281,7 @@ def get_audio_duration_sec(audio_path, ffmpeg_exe):
         return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     return 60.0
 
-def transcribe_Uploaded_Audio_Chunks(audio_path, sr_lang_code, ffmpeg_exe):
+def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
     import speech_recognition as sr
     dur = get_audio_duration_sec(audio_path, ffmpeg_exe)
     num_chunks = max(1, math.ceil(dur / 8.0))
@@ -151,65 +314,36 @@ def transcribe_Uploaded_Audio_Chunks(audio_path, sr_lang_code, ffmpeg_exe):
         )
     return "\n\n".join(blocks), dur, num_chunks
 
-def clean_markdown(txt):
-    txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL).strip()
-    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
-    return re.sub(r"\n?```$", "", txt).strip()
-
-def get_available_groq_models(clean_key):
-    headers_groq = {"Authorization": f"Bearer {clean_key}"}
-    try:
-        r_m = requests.get("https://api.groq.com/openai/v1/models", headers=headers_groq, timeout=15)
-        if r_m.status_code == 200:
-            raw_ids = [m["id"] for m in r_m.json().get("data", []) if "id" in m]
-            skip_words = ("whisper", "guard", "tts", "playai", "orpheus", "embed", "safeguard", "allam")
-            chat_models = [mid for mid in raw_ids if not any(sw in mid.lower() for sw in skip_words)]
-
-            def rank_model(m_id):
-                ml = m_id.lower()
-                if "llama-4" in ml or "maverick" in ml or "scout" in ml:
-                    return 0
-                if "70b" in ml or "qwen" in ml:
-                    return 1
-                if "llama" in ml:
-                    return 2
-                if "deepseek" in ml or "gemma" in ml or "kimi" in ml:
-                    return 3
-                return 4
-
-            chat_models.sort(key=rank_model)
-            if chat_models:
-                return chat_models
-    except Exception:
-        pass
-    return ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen-qwq-32b", "gemma2-9b-it"]
-
-def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, char_a_desc="", char_b_desc="", api_key=""):
+def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, char_a_desc="", char_b_desc="", single_char_desc="", api_key=""):
     lang_en = LANGUAGES[lang_label]["name_en"]
 
     if "Diálogo" in audio_mode:
         prompt_text = (
-            f"You are an expert screenwriter creating a viral, natural, high-retention dialogue video.\n"
-            f"Topic / Story: '{title}'\n"
+            f"You are a master Brazilian screenwriter creating an authentic, viral, high-retention dialogue scene.\n"
+            f"Story / Situation: '{title}'\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n"
-            f"Character A profile: {char_a_desc}\n"
-            f"Character B profile: {char_b_desc}\n\n"
-            f"MANDATORY DIALOGUE & VISUAL RULES:\n"
-            f"1. ONE SPEAKER PER 8-SECOND SCENE (for clean lip-sync and audio sorting): Alternate naturally between PERSONAGEM A and PERSONAGEM B across scenes. In each scene, ONLY the active speaker moves their lips naturally while the other listens silently.\n"
-            f"2. NATURAL SPEECH & TIMING: Write 100% in natural spoken {lang_en}, strictly 13 to 18 words per scene so it fits cleanly inside 8 seconds. Spell out numbers and abbreviations in full words.\n"
-            f"3. CONSISTENT VISUALS: Every [CENA: ...] must be in English, describing both or the active character in the setting, single continuous camera shot, zero on-screen text.\n"
-            f"4. ENDING: Scene {num_scenes} ends with an engaging hook/CTA to the audience.\n\n"
+            f"Character A (Fixed Identity): {char_a_desc}\n"
+            f"Character B (Fixed Identity): {char_b_desc}\n\n"
+            f"CRITICAL CONTINUITY, NATURALNESS & VISUAL LOCK RULES:\n"
+            f"1. STRICT PROGRESSIVE MEMORY (ZERO REPEATED QUESTIONS): Track every detail revealed in earlier scenes! If a character already said a name (e.g., Lucas), profession, or reason in Scene 3, NEVER ask 'who is he?' or repeat an already-answered question in later scenes. Every line must advance the conversation logically toward a punchline or climax.\n"
+            f"2. 100% IDIOMATIC NATIVE SPEECH: Write authentic, natural everyday {lang_en}. NEVER use awkward literal translations (never write unnatural phrases like 'vi o rosto dele na minha cara'). Every line MUST have strictly 12 to 17 words so it finishes comfortably inside 8 seconds.\n"
+            f"3. ONE SPEAKER PER 8-SECOND SCENE: Alternate between PERSONAGEM A and PERSONAGEM B. In each scene, ONLY the active speaker moves their lips while the other listens silently.\n"
+            f"4. FIXED SETTING LOCK: Define ONE exact room/location (e.g., cozy Minas Gerais rustic kitchen with wood-burning stove in soft daylight) and keep BOTH characters in that exact same room, position, and lighting across all {num_scenes} scenes.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, no intro/outro):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Single continuous shot in English showing Character A speaking with natural lip-sync while Character B listens, zero text]\n"
-            f"PERSONAGEM A: Natural dialogue line in {lang_en} (13-18 words)."
+            f"[CENA: Medium two-shot in the exact same rustic kitchen, Character A speaking expressively while Character B listens silently, zero text]\n"
+            f"PERSONAGEM A: Authentic, natural line in {lang_en} (12-17 words, zero abbreviations)."
         )
     else:
-        char_hint = (
-            "the white stick figure with a blue cap exploring the scenery" if "Palito" in style_choice
-            else ("the 3D character with a blue cap exploring the scenery" if "Cartoon" in style_choice
-                  else "pure cinematic documentary B-roll of landscapes, nature, or architecture (NO TV host or studio presenter)")
-        )
+        if single_char_desc.strip():
+            char_hint = f"the exact protagonist ({single_char_desc.strip()}) exploring the scenery with mouth closed in silence"
+        elif "Palito" in style_choice:
+            char_hint = "the white stick figure wearing a solid royal-blue baseball cap exploring the scenery"
+        elif "Cartoon" in style_choice:
+            char_hint = "the 3D character wearing a solid royal-blue baseball cap and blue jeans exploring the scenery"
+        else:
+            char_hint = "pure cinematic documentary B-roll of landscapes, nature, or architecture (NO TV host or studio presenter)"
+
         prompt_text = (
             f"You are a rigorous, fact-checked documentary researcher and scriptwriter.\n"
             f"Topic / Title: '{title}'\n"
@@ -230,7 +364,7 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
         return "", "⚠️ Cole sua chave gratuita da Groq (gsk_...) lá no canto superior direito e aperte ENTER!"
 
     last_error = ""
-    temp_val = 0.55 if "Diálogo" in audio_mode else 0.2
+    temp_val = 0.45 if "Diálogo" in audio_mode else 0.2
 
     if clean_key.startswith("gsk_"):
         headers_groq = {"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json"}
@@ -242,7 +376,10 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
                     json={
                         "model": groq_model,
                         "messages": [
-                            {"role": "system", "content": "Output ONLY the requested formatted script scenes. Spell out abbreviations in full words."},
+                            {
+                                "role": "system",
+                                "content": "Output ONLY the requested formatted script scenes. Maintain strict logical continuity across dialogue turns and use 100% natural idiomatic expressions."
+                            },
                             {"role": "user", "content": prompt_text}
                         ],
                         "temperature": temp_val,
@@ -385,7 +522,7 @@ def find_position_in_script(transcript, full_spoken_norm, lang_label):
             return best_pos, best_score
     return 999999, 0
 
-st.title("🎬 Estúdio Completo Google Flow — Voz Fixa, Diálogos & Áudio Próprio")
+st.title("🎬 Estúdio Completo Google Flow — Upload de Personagens, Voz Fixa & Diálogos")
 
 secret_key = ""
 try:
@@ -404,75 +541,112 @@ with col_top2:
         placeholder="Cole sua chave gsk_... e aperte ENTER"
     )
 
-tab1, tab2 = st.tabs(["📝 1. Roteiro, Diálogos, Áudio Próprio & Prompts", "🎞️ 2. Organizador & Mixagem de Áudio Próprio"])
+tab1, tab2 = st.tabs(["📝 1. Personagens, Roteiro IA & Prompts", "🎞️ 2. Organizador & Mixagem de Áudio Próprio"])
 
 with tab1:
-    st.markdown("### 🎛️ Passo 1: Escolha o Modo de Áudio e Atuação")
+    st.markdown("### 🎛️ Passo 1: Modo de Áudio e Upload dos Personagens")
     audio_mode = st.radio(
-        "Como será o áudio deste vídeo?",
+        "Como será o áudio e a atuação deste vídeo?",
         [
             "🎙️ Modo 1: Narrador Fixo (Trava Absoluta da Mesma Voz do Início ao Fim)",
-            "🗣️ Modo 2: Diálogo Entre Personagens (Personagens conversando com Lip-Sync e Vozes Fixas)",
-            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Cenas mudas ou guia + substituição na montagem)"
+            "🗣️ Modo 2: Diálogo Entre Personagens (Upload de Fotos + DNA Físico/Vocal Fixo + Lip-Sync)",
+            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Cenas sincronizadas + troca na montagem)"
         ]
     )
 
-    char_a_desc, char_b_desc = "", ""
-    voice_choice = "🎙️ Voz Masculina Fixa (Locutor Documentário)"
+    voice_choice = "🎙️ Voz Masculina Fixa (Barítono 35 anos)"
     custom_voice_timbre = ""
     mute_flow_for_custom = False
+    has_ref_image = False
 
-    if "Modo 1" in audio_mode:
+    if "Modo 1" in audio_mode or "Modo 3" in audio_mode:
         cm1, cm2 = st.columns([1, 1])
         with cm1:
-            voice_choice = st.radio("Gênero da Voz Fixa:", ["🎙️ Voz Masculina Fixa (Barítono 35 anos)", "🎙️ Voz Feminina Fixa (Mezzo-Soprano 32 anos)"])
+            if "Modo 1" in audio_mode:
+                voice_choice = st.radio("Gênero da Voz Fixa:", ["🎙️ Voz Masculina Fixa (Barítono 35 anos)", "🎙️ Voz Feminina Fixa (Mezzo-Soprano 32 anos)"])
+                custom_voice_timbre = st.text_input("Assinatura extra de voz (Opcional):", placeholder="Ex: Sotaque mineiro acolhedor, ritmo calmo")
+            else:
+                ref_audio_file = st.file_uploader("🎵 Opcional: Suba seu áudio (.mp3, .wav, .m4a) para transcrever de 8 em 8s:", type=["mp3", "wav", "m4a", "ogg"])
+                mute_flow_for_custom = st.checkbox("Gerar vídeos mudos no Flow", value=False, help="Deixe desmarcado para a Aba 2 organizar os vídeos pela voz-guia antes de trocar pelo seu áudio!")
+                if ref_audio_file is not None:
+                    if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO DE 8 EM 8 SEGUNDOS", use_container_width=True):
+                        with st.spinner("Transcrevendo seu áudio em blocos de 8 segundos..."):
+                            ffmpeg_exe = get_ffmpeg()
+                            tmp_aud = os.path.join(tempfile.mkdtemp(), ref_audio_file.name)
+                            with open(tmp_aud, "wb") as fa:
+                                fa.write(ref_audio_file.getbuffer())
+                            t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe)
+                            st.session_state["saved_script"] = t_script
+                            st.success(f"✅ Áudio transcrito ({dur_s:.1f}s -> {n_sc} cenas)!")
+
         with cm2:
-            custom_voice_timbre = st.text_input(
-                "Detalhe extra da voz (Opcional - trava ainda mais o mesmo timbre):",
-                placeholder="Ex: Sotaque mineiro calmo e acolhedor / Locutor sério estilo Discovery"
-            )
+            up_single = st.file_uploader("📸 Opcional: Subir Foto do Personagem Fixo (Ex: Mineirinho / Mascote):", type=["png", "jpg", "jpeg", "webp"], key="up_single")
+            if up_single is not None:
+                has_ref_image = True
+                st.image(up_single, width=140, caption="Personagem de Referência")
+                if st.button("🔍 EXTRAIR DNA FÍSICO DA FOTO (IA)", key="btn_single_dna", use_container_width=True):
+                    with st.spinner("Analisando cada detalhe do rosto e roupa na foto..."):
+                        dna_res, err_v = analyze_character_photo(up_single, api_key_input)
+                        if err_v:
+                            st.error(err_v)
+                        else:
+                            st.session_state["dna_single_char"] = dna_res
+                            st.success("✅ DNA visual extraído e travado!")
+            st.text_area("🧬 DNA Físico Fixo do Protagonista (Opcional — em Inglês):", key="dna_single_char", height=90, placeholder="Deixe vazio para documentário de paisagens ou suba uma foto acima...")
 
     elif "Modo 2" in audio_mode:
+        st.info("💡 **Trava Dupla de Identidade:** Você pode subir a foto do Personagem A e do Personagem B abaixo! A IA lê a foto para travar a roupa e o rosto no prompt, e ainda gera um **Cartão Duplo 16:9** pronto para você anexar como *Referência/Ingredient* lá no Google Flow.")
+        up_col1, up_col2 = st.columns([1, 1])
+        with up_col1:
+            up_char_a = st.file_uploader("📸 Subir Foto do Personagem A (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_a")
+            if up_char_a is not None:
+                has_ref_image = True
+                st.image(up_char_a, width=150, caption="Foto Personagem A")
+        with up_col2:
+            up_char_b = st.file_uploader("📸 Subir Foto do Personagem B (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_b")
+            if up_char_b is not None:
+                has_ref_image = True
+                st.image(up_char_b, width=150, caption="Foto Personagem B")
+
+        if up_char_a is not None or up_char_b is not None:
+            b_col1, b_col2 = st.columns([1, 1])
+            with b_col1:
+                if st.button("🔍 EXTRAIR DNA FÍSICO E ROUPAS DAS FOTOS ENVIADAS (IA)", type="primary", use_container_width=True):
+                    with st.spinner("Lendo traços faciais, cabelo e roupas exatas nas fotos..."):
+                        if up_char_a is not None:
+                            dna_a, err_a = analyze_character_photo(up_char_a, api_key_input)
+                            if err_a:
+                                st.error(f"Foto A: {err_a}")
+                            else:
+                                st.session_state["dna_char_a"] = dna_a
+                        if up_char_b is not None:
+                            dna_b, err_b = analyze_character_photo(up_char_b, api_key_input)
+                            if err_b:
+                                st.error(f"Foto B: {err_b}")
+                            else:
+                                st.session_state["dna_char_b"] = dna_b
+                        st.success("✅ DNA físico extraído das fotos com precisão milimétrica!")
+            with b_col2:
+                duo_png = build_duo_reference_card(up_char_a, up_char_b)
+                if duo_png:
+                    st.download_button(
+                        "🖼️ Baixar Cartão 16:9 dos Personagens (Para subir no Google Flow)",
+                        data=duo_png,
+                        file_name="Referencia_Personagens_Flow_16x9.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
+
         cd1, cd2 = st.columns([1, 1])
         with cd1:
-            char_a_desc = st.text_input(
-                "👤 Personagem A (Aparência + Voz Fixa em Inglês ou PT):",
-                value="50-year-old Brazilian rural father wearing a straw hat and plaid shirt, deep gruff protective male voice"
-            )
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=110)
+            st.text_input("🎙️ Trava de Voz — Personagem A:", key="voice_char_a")
         with cd2:
-            char_b_desc = st.text_input(
-                "👤 Personagem B (Aparência + Voz Fixa em Inglês ou PT):",
-                value="22-year-old Brazilian daughter wearing casual denim jacket, bright expressive young female voice"
-            )
-
-    elif "Modo 3" in audio_mode:
-        ca1, ca2 = st.columns([2, 1])
-        with ca1:
-            ref_audio_file = st.file_uploader(
-                "🎵 Opcional: Envie seu áudio pronto (.mp3, .wav, .m4a) para medir o tempo exato e transcrever as cenas automaticamente:",
-                type=["mp3", "wav", "m4a", "ogg"]
-            )
-        with ca2:
-            mute_flow_for_custom = st.checkbox(
-                "Gerar vídeos 100% mudos no Flow",
-                value=False,
-                help="Se desmarcado (Recomendado), o Flow gera voz-guia apenas para a Aba 2 colocar os vídeos em ordem sozinha, e depois troca pelo seu áudio!"
-            )
-        if ref_audio_file is not None:
-            if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO SINCRONIZADO DE 8 EM 8 SEGUNDOS", use_container_width=True):
-                with st.spinner("Escutando seu áudio e dividindo em blocos exatos de 8 segundos..."):
-                    ffmpeg_exe = get_ffmpeg()
-                    tmp_aud = os.path.join(tempfile.mkdtemp(), ref_audio_file.name)
-                    with open(tmp_aud, "wb") as fa:
-                        fa.write(ref_audio_file.getbuffer())
-                    transcribed_script, dur_s, n_sc = transcribe_Uploaded_Audio_Chunks(
-                        tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe
-                    )
-                    st.session_state["saved_script"] = transcribed_script
-                    st.success(f"✅ Áudio lido ({dur_s:.1f}s -> {n_sc} cenas de 8s)! Confira na caixa abaixo e gere os prompts.")
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=110)
+            st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
 
     st.divider()
-    st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA (ou usar o transcrito acima)")
+    st.markdown("### 🤖 Passo 2: Gerar Roteiro com Memória de Continuidade")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
         video_title = st.text_input("Título, Tema ou Situação do Diálogo:", placeholder="Ex: Pai caipira descobrindo o namorado da filha / 5 Cidades de MG")
@@ -491,21 +665,28 @@ with tab1:
             if not video_title.strip():
                 st.warning("Digite o tema ou situação primeiro.")
             else:
-                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas..."):
+                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas com continuidade travada..."):
                     script_out, err_msg = generate_ai_script(
-                        video_title, total_scenes_calc, selected_lang, style_choice,
-                        audio_mode, char_a_desc, char_b_desc, api_key_input
+                        video_title,
+                        total_scenes_calc,
+                        selected_lang,
+                        style_choice,
+                        audio_mode,
+                        st.session_state.get("dna_char_a", ""),
+                        st.session_state.get("dna_char_b", ""),
+                        st.session_state.get("dna_single_char", ""),
+                        api_key_input
                     )
                     if err_msg:
                         st.error(err_msg)
                     else:
                         st.session_state["saved_script"] = script_out
-                        st.success("✅ Roteiro pronto!")
+                        st.success("✅ Roteiro pronto e sem repetição de perguntas!")
 
     with cs2:
         script_for_prompts = st.text_area("Roteiro Completo (Editável):", value=st.session_state["saved_script"], height=260)
 
-    if st.button("✨ GERAR TODOS OS PROMPTS PARA O GOOGLE FLOW", type="primary", use_container_width=True):
+    if st.button("✨ GERAR TODOS OS PROMPTS BLINDADOS PARA O GOOGLE FLOW", type="primary", use_container_width=True):
         if not script_for_prompts.strip():
             st.warning("Gere ou cole um roteiro primeiro.")
         else:
@@ -513,33 +694,45 @@ with tab1:
             scenes = extract_scenes_for_prompts(script_for_prompts, selected_lang)
             visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
             lang_en_name = LANGUAGES[selected_lang]["name_en"]
+            ref_tag = "Match 100% the uploaded reference character image(s) in face, hair, and exact outfit. " if has_ref_image else ""
 
             st.success(f"✅ {len(scenes)} Prompts gerados! Copie abaixo ou baixe o arquivo .TXT.")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
                 if "Modo 2" in audio_mode:
-                    active_char = "Character A" if sc["speaker"] == "A" else ("Character B" if sc["speaker"] == "B" else "Character A")
-                    silent_char = "Character B" if active_char == "Character A" else "Character A"
+                    is_a = (sc["speaker"] != "B")
+                    active_char = "Character A" if is_a else "Character B"
+                    silent_char = "Character B" if is_a else "Character A"
+                    active_voice = st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")
+                    dna_a_txt = st.session_state.get("dna_char_a", DEFAULT_CHAR_A)
+                    dna_b_txt = st.session_state.get("dna_char_b", DEFAULT_CHAR_B)
+
                     p_box = (
-                        f"[VISUAL & CHARACTER LOCK: {visual_anchor} "
-                        f"Character A MUST always be: {char_a_desc}. Character B MUST always be: {char_b_desc}. "
-                        f"Single continuous 8-second shot, zero cuts, zero text on screen.]\n"
-                        f"SCENE ACTION: {sc['visual']}. ONLY {active_char} moves their mouth with natural realistic lip-sync while {silent_char} keeps mouth closed listening.\n"
-                        f"[DIALOGUE VOICEPRINT LOCK: Keep exact same vocal timbre for {active_char} across the entire video, native {lang_en_name}, zero background music.] "
-                        f"{active_char} speaks in {lang_en_name}: \"{sc['spoken']}\""
+                        f"[VISUAL & WARDROBE DNA LOCK: {visual_anchor} {ref_tag}"
+                        f"Character A MUST ALWAYS be: {dna_a_txt} (NEVER change shirt color, hat, or facial hair). "
+                        f"Character B MUST ALWAYS be: {dna_b_txt} (NEVER change hairstyle, face, or outfit colors). "
+                        f"Single continuous 8-second camera shot, same exact room lighting, zero cuts, zero text on screen.]\n"
+                        f"SCENE ACTION: {sc['visual']}. ONLY {active_char} moves their mouth with natural realistic lip-sync while {silent_char} keeps mouth completely closed listening.\n"
+                        f"[DIALOGUE VOICEPRINT LOCK: {active_char} speaks with {active_voice}, native {lang_en_name}. "
+                        f"Start with 0.3s clean silence, ZERO whispers before speaking, ZERO background music.] "
+                        f"{active_char} says clearly in {lang_en_name}: \"{sc['spoken']}\""
                     )
                 elif "Modo 3" in audio_mode and mute_flow_for_custom:
+                    single_dna = st.session_state.get("dna_single_char", "").strip()
+                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
                     p_box = (
-                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} "
+                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
                         f"CRITICAL RULE: Single continuous 8-second shot, zero cuts. All characters keep mouths closed in silence. Zero text on screen.]\n"
                         f"SCENE ACTION: {sc['visual']}.\n"
                         f"[AUDIO LOCK: Completely silent ambient track, zero speech, zero narration, zero music.]"
                     )
                 else:
+                    single_dna = st.session_state.get("dna_single_char", "").strip()
+                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
                     voice_anchor = get_strict_voice_lock(voice_choice, selected_lang, custom_voice_timbre)
                     p_box = (
-                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} "
+                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
                         f"CRITICAL RULE: Single continuous 8-second camera shot, zero cuts, zero morphing. "
                         f"All people on screen MUST keep their mouths closed and silent (strictly no lip-sync). Zero text, zero signs, zero banners.]\n"
                         f"SCENE ACTION: {sc['visual']}.\n"
@@ -636,52 +829,4 @@ with tab2:
                         results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx})
                         p_bar.progress(idx / total, text=f"Preparando cena {idx}/{total}...")
 
-                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
-                with open(c_list, 'w', encoding='utf-8') as cf:
-                    for s_num, item in enumerate(results, 1):
-                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
-                        shutil.copy2(item['path'], n_path)
-                        cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
-
-                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
-                p_bar.progress(0.9, text="Unindo cenas de vídeo...")
-                res = subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                if res.returncode != 0 or not os.path.exists(joined_mp4):
-                    subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c:v', 'libx264', '-preset', 'ultrafast', '-c:a', 'aac', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-                out_mp4 = joined_mp4
-
-                # Se o utilizador enviou o próprio áudio, substitui a faixa de áudio inteira do vídeo final!
-                if master_custom_audio is not None:
-                    p_bar.progress(0.95, text="Aplicando o seu próprio áudio no vídeo final...")
-                    custom_aud_path = os.path.join(work_dir, master_custom_audio.name)
-                    with open(custom_aud_path, "wb") as fa:
-                        fa.write(master_custom_audio.getbuffer())
-                    dubbed_mp4 = os.path.join(work_dir, "VIDEO_FINAL_COM_MEU_AUDIO.mp4")
-                    cmd_mux = [
-                        ffmpeg_exe, '-y',
-                        '-i', joined_mp4,
-                        '-i', custom_aud_path,
-                        '-map', '0:v:0',
-                        '-map', '1:a:0',
-                        '-c:v', 'copy',
-                        '-c:a', 'aac',
-                        '-b:a', '192k',
-                        '-shortest',
-                        dubbed_mp4
-                    ]
-                    res_mux = subprocess.run(cmd_mux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    if res_mux.returncode == 0 and os.path.exists(dubbed_mp4):
-                        out_mp4 = dubbed_mp4
-
-                p_bar.progress(1.0, text="Concluído!")
-                st.success(f"✅ Vídeo finalizado com sucesso! ({len(results)} cenas organizadas)")
-
-                with open(out_mp4, "rb") as vf:
-                    v_bytes = vf.read()
-                st.download_button("💾 BAIXAR VÍDEO COMPLETO (.MP4)", data=v_bytes, file_name="VIDEO_FINAL_PRONTO.mp4", mime="video/mp4", type="primary", use_container_width=True)
-                st.video(v_bytes)
-
-                with st.expander("📋 Relatório da Ordem das Cenas"):
-                    for i, r in enumerate(results, 1):
-                        st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *{r['transcript']}*")
+                c_list = os.path.join
