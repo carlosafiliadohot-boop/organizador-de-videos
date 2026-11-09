@@ -5,6 +5,8 @@ import zipfile
 import tempfile
 import subprocess
 import unicodedata
+import urllib.parse
+import requests
 import streamlit as st
 import speech_recognition as sr
 from rapidfuzz import fuzz
@@ -13,7 +15,7 @@ import imageio_ffmpeg
 FFMPEG_EXE = imageio_ffmpeg.get_ffmpeg_exe()
 
 st.set_page_config(
-    page_title="Estúdio Completo Google Flow",
+    page_title="Estúdio Global Google Flow",
     page_icon="🎬",
     layout="wide"
 )
@@ -21,31 +23,37 @@ st.set_page_config(
 if "saved_script" not in st.session_state:
     st.session_state["saved_script"] = ""
 
-VISUAL_KEYWORDS = {
-    "rua": ["street", "road", "walking", "houses", "flowers"],
-    "aluguel": ["rent", "houses", "street"],
-    "cofrinho": ["piggy", "bank", "coins", "money", "table"],
-    "moedas": ["coins", "piggy", "money"],
-    "jornal": ["newspaper", "reading", "bench", "square", "church", "plaza"],
-    "praca": ["square", "plaza", "bench", "church", "newspaper"],
-    "bom jardim": ["newspaper", "bench", "church", "square"],
-    "feira": ["market", "fruits", "cheese", "bag", "stall", "buying"],
-    "frutas": ["fruits", "market", "cheese"],
-    "bicicleta": ["bicycle", "bike", "cycling", "riding", "mountains"],
-    "lima duarte": ["bicycle", "bike", "riding", "mountains"],
-    "clinica": ["clinic", "hospital", "medical", "doctor", "nurse", "thumbs"],
-    "hospitais": ["hospital", "clinic", "medical", "doctor"],
-    "varanda": ["porch", "coffee", "cup", "mug", "lake", "sunset", "balcony"],
-    "rio novo": ["coffee", "porch", "lake", "sunset", "mug"],
-    "tchau": ["waving", "wave", "white", "smiling", "goodbye"],
-    "aeroporto": ["airport", "confins", "plane", "flight"],
-    "cataguases": ["cataguases", "bridge", "modernist", "niemeyer"],
-    "lagoa santa": ["lagoon", "lagoa", "lake", "boardwalk", "bike"],
-    "caxambu": ["caxambu", "fountain", "geyser", "park", "water", "carriage"],
-    "sao joao": ["train", "steam", "orchestra", "church", "baroque"],
-    "araxa": ["araxa", "hotel", "mud", "sulfur", "termas"],
-    "sao lourenco": ["balloon", "pedal", "bamboo", "bambu"],
-    "pocos de caldas": ["volcano", "crater", "vulcao", "cratera", "clock", "floral"]
+LANGUAGES = {
+    "🇧🇷 Português (Brasil)": {
+        "sr_code": "pt-BR",
+        "name_en": "Brazilian Portuguese (pt-BR)",
+        "name_pt": "Português do Brasil",
+        "end_keywords": ["grande abraco", "visitaria primeiro", "proximo video", "proximo dossie", "comente aqui", "ate a proxima"]
+    },
+    "🇪🇸 Espanhol (Latino/Neutro)": {
+        "sr_code": "es-MX",
+        "name_en": "Latin American Spanish (es-419)",
+        "name_pt": "Espanhol Latino-Americano",
+        "end_keywords": ["gran abrazo", "proximo video", "deja tu comentario", "hasta la proxima", "cual elegirias"]
+    },
+    "🇺🇸 Inglês (EUA)": {
+        "sr_code": "en-US",
+        "name_en": "American English (en-US)",
+        "name_pt": "Inglês Americano",
+        "end_keywords": ["next video", "leave a comment", "let us know in the comments", "thanks for watching", "see you next time"]
+    },
+    "🇫🇷 Francês (França)": {
+        "sr_code": "fr-FR",
+        "name_en": "French (fr-FR)",
+        "name_pt": "Francês",
+        "end_keywords": ["prochaine video", "laissez un commentaire", "a bientot", "merci d avoir regarde"]
+    },
+    "🇮🇹 Italiano (Itália)": {
+        "sr_code": "it-IT",
+        "name_en": "Italian (it-IT)",
+        "name_pt": "Italiano",
+        "end_keywords": ["prossimo video", "lascia un commento", "a presto", "grazie per aver guardato"]
+    }
 }
 
 STYLE_PRESETS = {
@@ -61,26 +69,74 @@ STYLE_PRESETS = {
     ),
     "Cinematográfico Realista 4K (Documentário)": (
         "Photorealistic 4K documentary footage, cinematic drone and gimbal camera movement, "
-        "natural daylight, ultra-detailed Brazilian town scenery. Any people on screen have "
+        "natural daylight, ultra-detailed scenery. Any people on screen have "
         "their mouths closed and are silent (no lip-sync), no text overlays or gibberish signs."
     ),
     "Personalizado (Definir abaixo)": ""
 }
 
-VOICE_LOCKS = {
-    "🎙️ Voz Masculina Fixa (Locutor Documentário)": (
-        "[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 35-year-old Brazilian male narrator "
-        "with a warm, deep, clear baritone documentary voice, native Brazilian Portuguese (pt-BR), steady 140 WPM pace, "
-        "clean studio condenser microphone, zero vocal variation between scenes. Even if female, elderly, or child "
-        "characters appear on screen, the off-screen voice MUST remain the 35-year-old male baritone narrator.]"
-    ),
-    "🎙️ Voz Feminina Fixa (Locutora Documentário)": (
-        "[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 32-year-old Brazilian female narrator "
-        "with a warm, smooth, clear mezzo-soprano documentary voice, native Brazilian Portuguese (pt-BR), steady 140 WPM pace, "
-        "clean studio condenser microphone, zero vocal variation between scenes. Even if male, elderly, or child "
-        "characters appear on screen, the off-screen voice MUST remain the 32-year-old female mezzo-soprano narrator.]"
+def get_voice_lock(gender_choice, lang_label):
+    lang_en = LANGUAGES[lang_label]["name_en"]
+    if "Masculina" in gender_choice:
+        return (
+            f"[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 35-year-old male narrator "
+            f"with a warm, deep, clear baritone documentary voice, native {lang_en}, steady 140 WPM pace, "
+            f"clean studio condenser microphone, zero vocal variation between scenes. Even if female, elderly, or child "
+            f"characters appear on screen, the off-screen voice MUST remain the 35-year-old male baritone narrator.]"
+        )
+    else:
+        return (
+            f"[AUDIO & VOICE LOCK: Off-screen studio narration by the EXACT SAME 32-year-old female narrator "
+            f"with a warm, smooth, clear mezzo-soprano documentary voice, native {lang_en}, steady 140 WPM pace, "
+            f"clean studio condenser microphone, zero vocal variation between scenes. Even if male, elderly, or child "
+            f"characters appear on screen, the off-screen voice MUST remain the 32-year-old female mezzo-soprano narrator.]"
+        )
+
+def generate_ai_script(title, minutes, lang_label, style_choice):
+    num_scenes = max(4, int((minutes * 60) // 8))
+    lang_info = LANGUAGES[lang_label]
+
+    system_prompt = (
+        f"You are an expert documentary and viral video scriptwriter. "
+        f"Generate a complete video script about '{title}' with EXACTLY {num_scenes} scenes (each scene is 8 seconds long, totaling {minutes} minute(s)).\n"
+        f"CRITICAL RULES:\n"
+        f"1. Follow this exact format for every scene without skipping numbers:\n"
+        f"[00:00 - 00:08]\n"
+        f"[CENA: Detailed visual description in English showing the scene action, characters with mouths closed in silence]\n"
+        f"LOCUÇÃO: Engaging narration written in {lang_info['name_en']} with 15 to 18 words maximum so it fits cleanly inside 8 seconds.\n\n"
+        f"2. The LOCUÇÃO must be written 100% in {lang_info['name_en']}.\n"
+        f"3. Every LOCUÇÃO line must have between 14 and 18 words (never exceed 20 words per scene).\n"
+        f"4. The very last scene (Scene {num_scenes}) must be a warm call-to-action asking the viewer to comment below.\n"
+        f"5. Output ONLY the script blocks, with a blank line between each scene."
     )
-}
+
+    try:
+        resp = requests.post(
+            "https://text.pollinations.ai/",
+            json={
+                "messages": [
+                    {"role": "system", "content": system_prompt},
+                    {"role": "user", "content": f"Title: {title} | Duration: {minutes} min ({num_scenes} scenes of 8s) | Language: {lang_info['name_en']} | Visual Style: {style_choice}"}
+                ],
+                "model": "openai",
+                "seed": 42
+            },
+            timeout=90
+        )
+        if resp.status_code == 200 and len(resp.text.strip()) > 50:
+            return resp.text.strip()
+    except Exception:
+        pass
+
+    try:
+        encoded = urllib.parse.quote(f"{system_prompt}\nTitle: {title}")
+        resp2 = requests.get(f"https://text.pollinations.ai/{encoded}", timeout=90)
+        if resp2.status_code == 200 and len(resp2.text.strip()) > 50:
+            return resp2.text.strip()
+    except Exception as e:
+        return f"Erro ao contatar servidor de IA: {e}"
+
+    return "Não foi possível gerar o roteiro automaticamente neste momento. Tente novamente em alguns segundos."
 
 def extract_scenes_for_prompts(raw_script):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
@@ -92,8 +148,8 @@ def extract_scenes_for_prompts(raw_script):
         visual = ""
         spoken = ""
         for line in lines:
-            m_cena = re.search(r'\[?CENA\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
-            m_loc = re.search(r'(?:LOCU[ÇC][ÃA]O|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+            m_cena = re.search(r'\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
+            m_loc = re.search(r'(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
             if m_cena:
                 visual = m_cena.group(1).strip()
             elif m_loc:
@@ -103,7 +159,7 @@ def extract_scenes_for_prompts(raw_script):
                     spoken = line
         if spoken or visual:
             if not visual:
-                visual = "Cenário brasileiro detalhado acompanhando a narração, personagens de boca fechada em silêncio"
+                visual = "Detailed cinematic scenery matching the narration, characters with mouths closed in silence"
             scenes.append({"visual": visual, "spoken": spoken})
     return scenes
 
@@ -113,15 +169,6 @@ def normalize_text(text):
     text = text.lower()
     text = unicodedata.normalize('NFD', text)
     text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-    num_map = {
-        '700': 'setecentos', '66': 'sessenta e seis', '111': 'cento e onze',
-        '165': 'cento e sessenta e cinco', '15': 'quinze', '35': 'trinta e cinco',
-        '20': 'vinte', '12': 'doze', '80': 'oitenta', '40': 'quarenta',
-        '853': 'oitocentos e cinquenta e tres', '800': 'oitocentos',
-        '1200': 'mil e duzentos', '750': 'setecentos e cinquenta'
-    }
-    for k, v in num_map.items():
-        text = re.sub(r'\b' + k + r'\b', f"{k} {v}", text)
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     text = re.sub(r'\s+', ' ', text).strip()
     return text
@@ -132,18 +179,18 @@ def parse_script_text(raw):
         line = line.strip()
         if not line:
             continue
-        m = re.search(r'(?:LOCU[ÇC][ÃA]O|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+        m = re.search(r'(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
         if m:
             spoken_lines.append(m.group(1).strip())
-        elif not re.match(r'^\[\d+:\d+', line) and not re.match(r'^\[CENA:', line, re.IGNORECASE):
-            cleaned = re.sub(r'\[CENA:.*?\]', '', line, flags=re.IGNORECASE).strip()
+        elif not re.match(r'^\[\d+:\d+', line) and not re.match(r'^\[(?:CENA|SCENE):', line, re.IGNORECASE):
+            cleaned = re.sub(r'\[(?:CENA|SCENE):.*?\]', '', line, flags=re.IGNORECASE).strip()
             if cleaned:
                 spoken_lines.append(cleaned)
 
     full_spoken = ' '.join(spoken_lines) if spoken_lines else raw
     return normalize_text(full_spoken), normalize_text(raw)
 
-def transcribe_video_audio(video_path, recognizer, temp_wav):
+def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code):
     attempts = [
         ('0.0', '8.0'),
         ('0.8', '7.0'),
@@ -160,18 +207,18 @@ def transcribe_video_audio(video_path, recognizer, temp_wav):
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
             with sr.AudioFile(temp_wav) as source:
                 audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language='pt-BR')
+            text = recognizer.recognize_google(audio_data, language=sr_lang_code)
             if text and len(text.strip()) >= 4:
                 return text
         except Exception:
             continue
     return ""
 
-def find_position_in_script(transcript, filename, full_spoken_norm, full_raw_norm):
+def find_position_in_script(transcript, filename, full_spoken_norm, full_raw_norm, lang_label):
     t_norm = normalize_text(transcript)
-    fname_lower = filename.lower()
+    end_kw = LANGUAGES[lang_label]["end_keywords"]
 
-    if "grande abraco" in t_norm or "visitaria primeiro" in t_norm or "proximo video" in t_norm or "proximo dossie" in t_norm:
+    if any(kw in t_norm for kw in end_kw):
         return len(full_spoken_norm) + 500, 100
 
     if t_norm and len(t_norm) >= 4:
@@ -198,33 +245,62 @@ def find_position_in_script(transcript, filename, full_spoken_norm, full_raw_nor
                 best_score = score
                 best_pos = pos
 
-        if best_score >= 55:
+        if best_score >= 52:
             return best_pos, best_score
-
-    for pt_word, en_list in VISUAL_KEYWORDS.items():
-        if any(en_w in fname_lower for en_w in en_list):
-            idx_raw = full_raw_norm.find(pt_word)
-            if idx_raw != -1:
-                ratio_pos = int((idx_raw / max(1, len(full_raw_norm))) * len(full_spoken_norm))
-                return ratio_pos, 75
 
     return 999999, 0
 
-st.title("🎬 Estúdio Completo Google Flow — Prompts & Montagem Automática")
+st.title("🎬 Estúdio Completo Google Flow — Roteiro IA, Multi-Idiomas & Montagem")
+
+selected_lang = st.selectbox(
+    "🌍 Idioma do Vídeo (Roteiro, Locução no Google Flow e Reconhecimento de Voz):",
+    list(LANGUAGES.keys())
+)
 
 tab1, tab2 = st.tabs([
-    "📝 1. Gerador de Prompts (Com Trava de Voz e Personagem)",
+    "📝 1. Criador de Roteiro IA & Gerador de Prompts",
     "🎞️ 2. Organizador e Juntador de Vídeos (Por Voz)"
 ])
 
 with tab1:
-    st.subheader("Fatiador de Roteiro e Gerador de Prompts para o Google Flow")
+    st.markdown("### 🤖 Opção A: Gerar Roteiro Completo Pelo Título (Automático)")
+    col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
+
+    with col_t1:
+        video_title = st.text_input(
+            "Digite o Título ou Tema do Vídeo:",
+            placeholder="Ex: 5 Cidades Mais Baratas e Seguras de Minas Gerais para Viver Bem"
+        )
+    with col_t2:
+        duration_min = st.number_input(
+            "Duração (Minutos):",
+            min_value=1,
+            max_value=15,
+            value=1,
+            step=1
+        )
+    with col_t3:
+        total_scenes_calc = int((duration_min * 60) // 8)
+        st.metric("Total de Cenas (8s)", f"{total_scenes_calc} cenas")
+
+    if st.button("🪄 CRIAR ROTEIRO COMPLETO AUTOMATICAMENTE", use_container_width=True):
+        if not video_title.strip():
+            st.warning("Digite um título ou tema para o vídeo primeiro.")
+        else:
+            with st.spinner(f"Escrevendo roteiro de {duration_min} min ({total_scenes_calc} cenas) em {selected_lang}..."):
+                generated = generate_ai_script(video_title, duration_min, selected_lang, "Documentário")
+                st.session_state["saved_script"] = generated
+                st.success("✅ Roteiro criado com sucesso! Confira abaixo e clique em 'Gerar Todos os Prompts'.")
+
+    st.divider()
+    st.markdown("### 🎙️ Opção B: Configurar Voz, Estilo e Gerar Prompts das Cenas")
+
     c1, c2 = st.columns([1, 1])
 
     with c1:
         voice_choice = st.radio(
-            "Selecione o Gênero da Voz do Narrador (Mesma voz do início ao fim):",
-            list(VOICE_LOCKS.keys())
+            "Gênero da Voz do Narrador (Trava a mesma voz do início ao fim):",
+            ["🎙️ Voz Masculina Fixa (Locutor Documentário)", "🎙️ Voz Feminina Fixa (Locutora Documentário)"]
         )
         style_choice = st.selectbox(
             "Estilo Visual e Personagem Fixo:",
@@ -239,21 +315,23 @@ with tab1:
 
     with c2:
         script_for_prompts = st.text_area(
-            "Cole o Roteiro Completo Aqui:",
-            height=240,
+            "Roteiro Completo (Gerado acima ou colado manualmente):",
+            value=st.session_state["saved_script"],
+            height=260,
             placeholder="[00:00 - 00:08]\n[CENA: ...]\nLOCUÇÃO: ..."
         )
 
-    if st.button("✨ GERAR TODOS OS PROMPTS COM TRAVA DE VOZ", type="primary", use_container_width=True):
+    if st.button("✨ GERAR TODOS OS PROMPTS COM TRAVA DE VOZ E IDIOMA", type="primary", use_container_width=True):
         if not script_for_prompts.strip():
-            st.warning("Cole o roteiro acima para gerar os prompts.")
+            st.warning("Gere um roteiro pelo título acima ou cole o seu roteiro na caixa de texto.")
         else:
             st.session_state["saved_script"] = script_for_prompts
             scenes = extract_scenes_for_prompts(script_for_prompts)
             visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
-            voice_anchor = VOICE_LOCKS[voice_choice]
+            voice_anchor = get_voice_lock(voice_choice, selected_lang)
+            lang_en_name = LANGUAGES[selected_lang]["name_en"]
 
-            st.success(f"✅ {len(scenes)} Cenas geradas com trava de voz! (O roteiro já foi copiado automaticamente para a Aba 2).")
+            st.success(f"✅ {len(scenes)} Cenas prontas em {selected_lang}! (O roteiro já está salvo na Aba 2).")
 
             all_prompts_text = []
             for idx, sc in enumerate(scenes, 1):
@@ -262,22 +340,22 @@ with tab1:
                     f"CRITICAL RULE: All characters on screen MUST keep their mouths closed and silent (strictly no lip-sync, no talking on camera). "
                     f"Zero text, zero letters, zero signs on screen.]\n"
                     f"SCENE ACTION: {sc['visual']}.\n"
-                    f"{voice_anchor} Narrator says in Brazilian Portuguese: \"{sc['spoken']}\""
+                    f"{voice_anchor} Narrator says in {lang_en_name}: \"{sc['spoken']}\""
                 )
                 all_prompts_text.append(f"=== CENA {idx:03d} ===\n{prompt_box}\n")
                 with st.expander(f"🎬 Cena {idx:03d} — \"{sc['spoken'][:65]}...\"", expanded=(idx <= 3)):
                     st.code(prompt_box, language="text")
 
             st.download_button(
-                "📥 Baixar Todos os Prompts em um Arquivo (.TXT)",
+                "📥 Baixar Todos os Prompts (.TXT)",
                 data="\n".join(all_prompts_text),
-                file_name="Prompts_Google_Flow_Voz_Fixa.txt",
+                file_name="Prompts_Google_Flow.txt",
                 mime="text/plain",
                 use_container_width=True
             )
 
 with tab2:
-    st.subheader("Organizador e Juntador Automático de Vídeos por Reconhecimento de Voz")
+    st.subheader(f"Organizador e Juntador Automático de Vídeos ({selected_lang})")
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -285,7 +363,7 @@ with tab2:
             "📜 1. Roteiro Completo do Vídeo:",
             value=st.session_state["saved_script"],
             height=300,
-            placeholder="Cole aqui o seu roteiro com [CENA: ...] e LOCUÇÃO: ..."
+            placeholder="O roteiro gerado na Aba 1 aparece aqui automaticamente..."
         )
 
     with col2:
@@ -297,7 +375,7 @@ with tab2:
 
     if st.button("🚀 ESCUTAR CENAS, ORGANIZAR E JUNTAR VÍDEO", type="primary", use_container_width=True):
         if not roteiro_input or len(roteiro_input.strip()) < 15:
-            st.error("Por favor, cole o roteiro do vídeo na caixa de texto à esquerda.")
+            st.error("Por favor, gere ou cole o roteiro do vídeo na caixa de texto à esquerda.")
         elif not uploaded_files:
             st.error("Por favor, envie o arquivo .ZIP ou os vídeos .MP4.")
         else:
@@ -334,15 +412,16 @@ with tab2:
                 full_spoken_norm, full_raw_norm = parse_script_text(roteiro_input)
                 recognizer = sr.Recognizer()
                 temp_wav = os.path.join(work_dir, "_temp.wav")
+                sr_code = LANGUAGES[selected_lang]["sr_code"]
                 results = []
 
-                progress_bar = st.progress(0, text="Iniciando reconhecimento de voz das cenas...")
+                progress_bar = st.progress(0, text=f"Iniciando reconhecimento de voz em {selected_lang}...")
 
                 total = len(mp4_files)
                 for idx, video_path in enumerate(mp4_files, 1):
                     fname = os.path.basename(video_path)
-                    transcript = transcribe_video_audio(video_path, recognizer, temp_wav)
-                    pos, score = find_position_in_script(transcript, fname, full_spoken_norm, full_raw_norm)
+                    transcript = transcribe_video_audio(video_path, recognizer, temp_wav, sr_code)
+                    pos, score = find_position_in_script(transcript, fname, full_spoken_norm, full_raw_norm, selected_lang)
                     results.append({
                         'path': video_path,
                         'original_name': fname,
