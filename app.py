@@ -82,8 +82,40 @@ def get_voice_lock(gender_choice, lang_label):
     )
 
 def clean_markdown(txt):
-    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt.strip())
+    # Remove blocos <think>...</think> de modelos de raciocínio e cercas markdown
+    txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL).strip()
+    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
     return re.sub(r"\n?```$", "", txt).strip()
+
+def get_available_groq_models(clean_key):
+    headers_groq = {"Authorization": f"Bearer {clean_key}"}
+    try:
+        r_m = requests.get("https://api.groq.com/openai/v1/models", headers=headers_groq, timeout=15)
+        if r_m.status_code == 200:
+            raw_ids = [m["id"] for m in r_m.json().get("data", []) if "id" in m]
+            # Filtra modelos de áudio, guard/segurança ou visão pura
+            skip_words = ("whisper", "guard", "tts", "playai", "orpheus", "embed", "safeguard", "allam")
+            chat_models = [mid for mid in raw_ids if not any(sw in mid.lower() for sw in skip_words)]
+
+            # Ordena priorizando os melhores modelos de escrita (Llama 4, Llama 3, Qwen, DeepSeek, Gemma)
+            def rank_model(m_id):
+                ml = m_id.lower()
+                if "llama-4" in ml or "maverick" in ml or "scout" in ml:
+                    return 0
+                if "70b" in ml or "qwen" in ml:
+                    return 1
+                if "llama" in ml:
+                    return 2
+                if "deepseek" in ml or "gemma" in ml or "kimi" in ml:
+                    return 3
+                return 4
+
+            chat_models.sort(key=rank_model)
+            if chat_models:
+                return chat_models
+    except Exception:
+        pass
+    return ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen-qwq-32b", "gemma2-9b-it"]
 
 def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
     num_scenes = max(4, int((minutes * 60) // 8))
@@ -110,17 +142,18 @@ def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
 
     clean_key = api_key.strip() if api_key else ""
     if not clean_key:
-        return "", "⚠️ Cole sua chave gratuita da Groq (gsk_...) lá no canto superior direito e aperte ENTER! Pegue grátis em: https://console.groq.com/keys"
+        return "", "⚠️ Cole sua chave gratuita da Groq (gsk_...) lá no canto superior direito e aperte ENTER!"
 
     last_error = ""
 
-    # 1. ROTA GROQ CLOUD (Chaves começando com gsk_ - 100% Grátis e Ultra-Rápida)
+    # 1. ROTA GROQ CLOUD COM DESCOBERTA AUTOMÁTICA DE MODELOS ATIVOS
     if clean_key.startswith("gsk_"):
         headers_groq = {
             "Authorization": f"Bearer {clean_key}",
             "Content-Type": "application/json"
         }
-        for groq_model in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
+        candidate_models = get_available_groq_models(clean_key)
+        for groq_model in candidate_models[:6]:
             try:
                 r_groq = requests.post(
                     "https://api.groq.com/openai/v1/chat/completions",
@@ -128,11 +161,11 @@ def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
                     json={
                         "model": groq_model,
                         "messages": [
-                            {"role": "system", "content": "You are an expert YouTube scriptwriter. Output only the requested formatted scenes."},
+                            {"role": "system", "content": "You are an expert YouTube scriptwriter. Output ONLY the formatted script scenes without thinking tags or extra commentary."},
                             {"role": "user", "content": prompt_text}
                         ],
                         "temperature": 0.7,
-                        "max_tokens": 8000
+                        "max_tokens": 6000
                     },
                     timeout=90
                 )
@@ -141,12 +174,12 @@ def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
                     if len(out) > 80:
                         return out, None
                 else:
-                    last_error = f"Groq HTTP {r_groq.status_code}: {r_groq.text[:200]}"
+                    last_error = f"Modelo {groq_model} -> HTTP {r_groq.status_code}: {r_groq.text[:180]}"
             except Exception as e_g:
                 last_error = str(e_g)
-        return "", f"❌ Erro na chave Groq: {last_error}"
+        return "", f"❌ Erro na Groq após testar modelos disponíveis: {last_error}"
 
-    # 2. ROTA VERTEX AI EXPRESS (Para chaves começando com AQ.)
+    # 2. ROTA VERTEX AI EXPRESS (Chaves AQ.)
     if clean_key.startswith("AQ."):
         for v_model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
             try:
@@ -166,7 +199,7 @@ def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
             except Exception as e_v:
                 last_error = str(e_v)
 
-    # 3. ROTA GEMINI AI STUDIO PADRÃO (Para chaves AIzaSy...)
+    # 3. ROTA GEMINI AI STUDIO PADRÃO (Chaves AIzaSy...)
     for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
         try:
             g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
@@ -185,10 +218,7 @@ def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
         except Exception as e_req:
             last_error = str(e_req)
 
-    return "", (
-        f"❌ O Google recusou essa chave ({last_error}). "
-        f"Solução imediata e 100% grátis: crie uma chave 'gsk_...' em 15 segundos no site https://console.groq.com/keys e cole lá no topo!"
-    )
+    return "", f"❌ Não foi possível autenticar a chave ({last_error}). Use sua chave 'gsk_...' da Groq!"
 
 def extract_scenes_for_prompts(raw_script):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
