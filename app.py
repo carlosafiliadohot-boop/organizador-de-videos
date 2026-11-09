@@ -81,7 +81,11 @@ def get_voice_lock(gender_choice, lang_label):
         f"characters appear on screen, the off-screen voice MUST remain the 32-year-old female mezzo-soprano narrator.]"
     )
 
-def generate_ai_script(title, minutes, lang_label, style_choice, gemini_key=""):
+def clean_markdown(txt):
+    txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt.strip())
+    return re.sub(r"\n?```$", "", txt).strip()
+
+def generate_ai_script(title, minutes, lang_label, style_choice, api_key=""):
     num_scenes = max(4, int((minutes * 60) // 8))
     lang_en = LANGUAGES[lang_label]["name_en"]
 
@@ -104,53 +108,87 @@ def generate_ai_script(title, minutes, lang_label, style_choice, gemini_key=""):
         f"LOCUÇÃO: Natural, engaging narration in {lang_en} (14-19 words)."
     )
 
-    clean_key = gemini_key.strip() if gemini_key else ""
+    clean_key = api_key.strip() if api_key else ""
     if not clean_key:
-        return "", "⚠️ O campo da chave está vazio! Cole sua chave lá no canto superior direito e aperte ENTER antes de clicar no botão."
+        return "", "⚠️ Cole sua chave gratuita da Groq (gsk_...) lá no canto superior direito e aperte ENTER! Pegue grátis em: https://console.groq.com/keys"
 
     last_error = ""
 
-    # 1. SDK Oficial do Google GenAI (suporta chaves AQ. e AIza.)
-    try:
-        from google import genai
-        client = genai.Client(api_key=clean_key)
-        for m_name in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+    # 1. ROTA GROQ CLOUD (Chaves começando com gsk_ - 100% Grátis e Ultra-Rápida)
+    if clean_key.startswith("gsk_"):
+        headers_groq = {
+            "Authorization": f"Bearer {clean_key}",
+            "Content-Type": "application/json"
+        }
+        for groq_model in ["llama-3.3-70b-versatile", "llama-3.1-8b-instant"]:
             try:
-                resp = client.models.generate_content(model=m_name, contents=prompt_text)
-                if resp and resp.text and len(resp.text.strip()) > 80:
-                    txt = re.sub(r"^```[a-zA-Z]*\n?", "", resp.text.strip())
-                    txt = re.sub(r"\n?```$", "", txt).strip()
-                    return txt, None
-            except Exception as e_mod:
-                last_error = str(e_mod)
-    except Exception as e_sdk:
-        last_error = str(e_sdk)
+                r_groq = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers_groq,
+                    json={
+                        "model": groq_model,
+                        "messages": [
+                            {"role": "system", "content": "You are an expert YouTube scriptwriter. Output only the requested formatted scenes."},
+                            {"role": "user", "content": prompt_text}
+                        ],
+                        "temperature": 0.7,
+                        "max_tokens": 8000
+                    },
+                    timeout=90
+                )
+                if r_groq.status_code == 200:
+                    out = clean_markdown(r_groq.json()["choices"][0]["message"]["content"])
+                    if len(out) > 80:
+                        return out, None
+                else:
+                    last_error = f"Groq HTTP {r_groq.status_code}: {r_groq.text[:200]}"
+            except Exception as e_g:
+                last_error = str(e_g)
+        return "", f"❌ Erro na chave Groq: {last_error}"
 
-    # 2. Chamada Direta via Header x-goog-api-key (compatível com tokens AQ.)
-    headers = {
-        "Content-Type": "application/json",
-        "x-goog-api-key": clean_key
-    }
-    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash", "gemini-flash-latest"]:
+    # 2. ROTA VERTEX AI EXPRESS (Para chaves começando com AQ.)
+    if clean_key.startswith("AQ."):
+        for v_model in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+            try:
+                v_url = f"https://aiplatform.googleapis.com/v1/publishers/google/models/{v_model}:generateContent?key={clean_key}"
+                r_v = requests.post(
+                    v_url,
+                    headers={"Content-Type": "application/json"},
+                    json={"contents": [{"role": "user", "parts": [{"text": prompt_text}]}]},
+                    timeout=90
+                )
+                if r_v.status_code == 200:
+                    out = clean_markdown(r_v.json()["candidates"][0]["content"]["parts"][0]["text"])
+                    if len(out) > 80:
+                        return out, None
+                else:
+                    last_error = f"Vertex AQ HTTP {r_v.status_code}: {r_v.text[:180]}"
+            except Exception as e_v:
+                last_error = str(e_v)
+
+    # 3. ROTA GEMINI AI STUDIO PADRÃO (Para chaves AIzaSy...)
+    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
         try:
-            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent"
-            payload = {
-                "contents": [{"parts": [{"text": prompt_text}]}],
-                "generationConfig": {"temperature": 0.75}
-            }
-            r_gem = requests.post(g_url, json=payload, headers=headers, timeout=90)
+            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
+            r_gem = requests.post(
+                g_url,
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": prompt_text}]}]},
+                timeout=90
+            )
             if r_gem.status_code == 200:
-                txt = r_gem.json()["candidates"][0]["content"]["parts"][0]["text"].strip()
-                txt = re.sub(r"^```[a-zA-Z]*\n?", "", txt)
-                txt = re.sub(r"\n?```$", "", txt).strip()
-                if len(txt) > 80:
-                    return txt, None
+                out = clean_markdown(r_gem.json()["candidates"][0]["content"]["parts"][0]["text"])
+                if len(out) > 80:
+                    return out, None
             else:
-                last_error = f"HTTP {r_gem.status_code}: {r_gem.text[:200]}"
+                last_error = f"HTTP {r_gem.status_code}: {r_gem.text[:180]}"
         except Exception as e_req:
             last_error = str(e_req)
 
-    return "", f"❌ Não foi possível autenticar a chave no Google. Detalhe técnico: {last_error}"
+    return "", (
+        f"❌ O Google recusou essa chave ({last_error}). "
+        f"Solução imediata e 100% grátis: crie uma chave 'gsk_...' em 15 segundos no site https://console.groq.com/keys e cole lá no topo!"
+    )
 
 def extract_scenes_for_prompts(raw_script):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
@@ -243,7 +281,7 @@ st.title("🎬 Estúdio Completo Google Flow — Roteiro IA, Multi-Idiomas & Mon
 
 secret_key = ""
 try:
-    secret_key = st.secrets.get("GEMINI_API_KEY", "")
+    secret_key = st.secrets.get("API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
 except Exception:
     secret_key = ""
 
@@ -251,11 +289,11 @@ col_top1, col_top2 = st.columns([2, 1])
 with col_top1:
     selected_lang = st.selectbox("🌍 Idioma do Vídeo:", list(LANGUAGES.keys()))
 with col_top2:
-    gemini_api_key = st.text_input(
-        "🔑 Chave Gemini Gratuita (Cole e aperte ENTER):",
+    api_key_input = st.text_input(
+        "🔑 Chave IA Grátis (Groq 'gsk_...' ou Google):",
         value=secret_key,
         type="password",
-        placeholder="Cole sua chave AQ... ou AIza... aqui"
+        placeholder="Cole sua chave gsk_... e aperte ENTER"
     )
 
 tab1, tab2 = st.tabs(["📝 1. Criador de Roteiro IA & Gerador de Prompts", "🎞️ 2. Organizador e Juntador de Vídeos (Por Voz)"])
@@ -282,7 +320,7 @@ with tab1:
             st.warning("Digite um título ou tema para o vídeo primeiro.")
         else:
             with st.spinner(f"Escrevendo roteiro real e detalhado de {duration_min} min ({total_scenes_calc} cenas) em {selected_lang}..."):
-                script_out, err_msg = generate_ai_script(video_title, duration_min, selected_lang, style_choice, gemini_api_key)
+                script_out, err_msg = generate_ai_script(video_title, duration_min, selected_lang, style_choice, api_key_input)
                 if err_msg:
                     st.error(err_msg)
                 else:
