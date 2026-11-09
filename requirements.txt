@@ -2,6 +2,4 @@ streamlit
 SpeechRecognition
 rapidfuzz
 imageio-ffmpeg
-standard-aifc
-audioop-lts
 requests
