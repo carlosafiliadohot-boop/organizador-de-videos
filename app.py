@@ -746,7 +746,10 @@ with tab1:
             st.download_button("📥 Baixar Todos os Prompts (.TXT)", data="\n".join(all_prompts_text), file_name="Prompts_Flow.txt", use_container_width=True)
 
 with tab2:
-    st.subheader(f"Organizador por Voz & Mixagem de Áudio Próprio ({selected_lang})")
+    with tab2:
+    st.subheader(f"Organizador por Voz & Entrega do Vídeo Final ({selected_lang})")
+    st.info("📌 **Fluxo completo:** 1) Gere o roteiro e baixe os Prompts na **Aba 1** ➔ 2) Gere os clipes no **Google Flow** e baixe o `.ZIP` ➔ 3) Suba o `.ZIP` abaixo para receber o **Vídeo Final Pronto (.MP4)**!")
+
     col1, col2 = st.columns([1, 1])
 
     with col1:
@@ -754,7 +757,7 @@ with tab2:
 
     with col2:
         uploaded_files = st.file_uploader(
-            "📦 2. Envie o .ZIP do Google Flow (ou vários .MP4):",
+            "📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):",
             type=["zip", "mp4"],
             accept_multiple_files=True
         )
@@ -765,13 +768,13 @@ with tab2:
         )
         sort_method = st.radio(
             "Como ordenar os clipes antes de juntar?",
-            ["🗣️ Escutar a fala dos clipes e ordenar pelo roteiro (Automático)", "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos gerados mudos)"],
+            ["🗣️ Escutar a fala dos clipes e ordenar pelo roteiro (Automático)", "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos mudos)"],
             horizontal=False
         )
 
-    if st.button("🚀 ORGANIZAR CENAS E GERAR VÍDEO FINAL", type="primary", use_container_width=True):
+    if st.button("🚀 ORGANIZAR CENAS E ENTREGAR VÍDEO FINAL PRONTO", type="primary", use_container_width=True):
         if not uploaded_files:
-            st.error("Envie o ficheiro .ZIP ou os vídeos .MP4.")
+            st.error("⚠️ Falta enviar os vídeos! Gere as cenas no Google Flow usando os prompts da Aba 1 e suba o arquivo .ZIP (ou .MP4) na caixa 2 acima.")
         elif "Escutar" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
             st.error("Cole o roteiro à esquerda (ou mude para ordenar pelo nome dos arquivos se os vídeos forem mudos).")
         else:
@@ -788,7 +791,8 @@ with tab2:
                 if uf.name.lower().endswith(".zip"):
                     z_path = os.path.join(work_dir, uf.name)
                     with open(z_path, "wb") as f:
-                        f.write(uf.getbuffer())
+                        fh_bytes = uf.getbuffer()
+                        f.write(fh_bytes)
                     with zipfile.ZipFile(z_path, 'r') as z:
                         for m in z.namelist():
                             if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
@@ -797,15 +801,17 @@ with tab2:
                                     t_path = os.path.join(extract_dir, fn)
                                     with z.open(m) as src, open(t_path, 'wb') as dst:
                                         shutil.copyfileobj(src, dst)
-                                    mp4_files.append(t_path)
+                                    if os.path.getsize(t_path) > 1000:
+                                        mp4_files.append(t_path)
                 elif uf.name.lower().endswith(".mp4"):
                     t_path = os.path.join(extract_dir, uf.name)
                     with open(t_path, "wb") as f:
                         f.write(uf.getbuffer())
-                    mp4_files.append(t_path)
+                    if os.path.getsize(t_path) > 1000:
+                        mp4_files.append(t_path)
 
             if not mp4_files:
-                st.error("Nenhum vídeo .MP4 encontrado.")
+                st.error("Nenhum vídeo .MP4 válido foi encontrado dentro do arquivo enviado.")
             else:
                 results = []
                 p_bar = st.progress(0, text="Processando cenas...")
@@ -821,12 +827,94 @@ with tab2:
                         tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
                         pos, sc = find_position_in_script(tr, full_spoken_norm, selected_lang)
                         results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'position': pos})
-                        p_bar.progress(idx / total, text=f"Escutando cena {idx}/{total}: '{tr[:45]}...'")
+                        p_bar.progress((idx / total) * 0.75, text=f"Escutando cena {idx}/{total}: '{tr[:45]}...'")
                     results.sort(key=lambda x: (x['position'], x['original_name']))
                 else:
                     mp4_files.sort(key=lambda p: os.path.basename(p).lower())
                     for idx, v_path in enumerate(mp4_files, 1):
                         results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx})
-                        p_bar.progress(idx / total, text=f"Preparando cena {idx}/{total}...")
+                        p_bar.progress((idx / total) * 0.75, text=f"Preparando cena {idx}/{total}...")
 
-                c_list = os.path.join
+                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
+                with open(c_list, 'w', encoding='utf-8') as cf:
+                    for s_num, item in enumerate(results, 1):
+                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
+                        shutil.copy2(item['path'], n_path)
+                        safe_p = n_path.replace("\\", "/")
+                        cf.write(f"file '{safe_p}'\n")
+
+                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
+                p_bar.progress(0.85, text="Unindo todas as cenas em um único vídeo...")
+
+                # Tentativa 1: Cópia direta ultra-rápida sem gastar memória RAM
+                res = subprocess.run(
+                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+
+                # Tentativa 2: Padronização leve (2 threads para não estourar RAM do Streamlit)
+                if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
+                    p_bar.progress(0.90, text="Padronizando formato dos clipes para união segura...")
+                    norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
+                    with open(norm_list, 'w', encoding='utf-8') as nf:
+                        for s_num, item in enumerate(results, 1):
+                            norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
+                            subprocess.run([
+                                ffmpeg_exe, '-y', '-i', item['path'],
+                                '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30',
+                                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
+                            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
+                                nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
+
+                    subprocess.run(
+                        [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
+                        stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                    )
+
+                out_mp4 = joined_mp4
+
+                if master_custom_audio is not None and os.path.exists(joined_mp4):
+                    p_bar.progress(0.95, text="Aplicando o seu próprio áudio no vídeo final...")
+                    custom_aud_path = os.path.join(work_dir, master_custom_audio.name)
+                    with open(custom_aud_path, "wb") as fa:
+                        fa.write(master_custom_audio.getbuffer())
+                    dubbed_mp4 = os.path.join(work_dir, "VIDEO_FINAL_COM_MEU_AUDIO.mp4")
+                    cmd_mux = [
+                        ffmpeg_exe, '-y', '-i', joined_mp4, '-i', custom_aud_path,
+                        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
+                        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', dubbed_mp4
+                    ]
+                    res_mux = subprocess.run(cmd_mux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
+                        out_mp4 = dubbed_mp4
+
+                p_bar.progress(1.0, text="Concluído!")
+
+                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
+                    st.session_state["final_video_path"] = out_mp4
+                    st.session_state["final_report"] = results
+                else:
+                    st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique se os arquivos enviados não estão corrompidos.")
+
+    if "final_video_path" in st.session_state and os.path.exists(st.session_state["final_video_path"]):
+        final_p = st.session_state["final_video_path"]
+        size_mb = os.path.getsize(final_p) / (1024 * 1024)
+        st.success(f"✅ VÍDEO FINAL PRONTO! ({len(st.session_state.get('final_report', []))} cenas unidas — {size_mb:.1f} MB)")
+
+        with open(final_p, "rb") as vf_dl:
+            st.download_button(
+                "💾 BAIXAR VÍDEO COMPLETO PRONTO (.MP4)",
+                data=vf_dl,
+                file_name="VIDEO_FINAL_PRONTO.mp4",
+                mime="video/mp4",
+                type="primary",
+                use_container_width=True
+            )
+
+        st.video(final_p)
+
+        with st.expander("📋 Relatório da Ordem das Cenas"):
+            for i, r in enumerate(st.session_state.get("final_report", []), 1):
+                st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *{r['transcript']}*")
