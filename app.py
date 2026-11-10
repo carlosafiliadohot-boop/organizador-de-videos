@@ -399,4 +399,462 @@ def extract_scenes_for_prompts(raw_script, lang_label):
         lines = [l.strip() for l in block.splitlines() if l.strip()]
         visual, spoken, speaker_tag = "", "", "NARRATOR"
         for line in lines:
-            m_cena = re.search(r'\[?(?:CENA|SCENE)\
+            m_cena = re.search(r'\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
+            m_pa = re.search(r'^PERSONAGEM\s*(?:A|1)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+            m_pb = re.search(r'^PERSONAGEM\s*(?:B|2)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+            m_loc = re.search(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+            if m_cena:
+                visual = m_cena.group(1).strip()
+            elif m_pa:
+                speaker_tag = "A"
+                spoken = fix_pronunciation(m_pa.group(1).strip(), lang_label)
+            elif m_pb:
+                speaker_tag = "B"
+                spoken = fix_pronunciation(m_pb.group(1).strip(), lang_label)
+            elif m_loc:
+                speaker_tag = "NARRATOR"
+                spoken = fix_pronunciation(m_loc.group(1).strip(), lang_label)
+            elif not re.match(r'^\[\d+:\d+', line) and not spoken:
+                spoken = fix_pronunciation(line, lang_label)
+        if spoken or visual:
+            if not visual:
+                visual = "Single continuous wide cinematic shot matching the context, zero text on screen"
+            scenes.append({"visual": visual, "spoken": spoken, "speaker": speaker_tag})
+    return scenes
+
+def normalize_text(text):
+    if not text:
+        return ""
+    text = unicodedata.normalize('NFD', text.lower())
+    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
+    text = re.sub(r'[^a-z0-9\s]', ' ', text)
+    return re.sub(r'\s+', ' ', text).strip()
+
+def parse_script_text(raw, lang_label):
+    spoken_lines = []
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        m = re.search(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+        if m:
+            spoken_lines.append(fix_pronunciation(m.group(1).strip(), lang_label))
+        elif not re.match(r'^\[\d+:\d+', line) and not re.match(r'^\[(?:CENA|SCENE):', line, re.IGNORECASE):
+            cleaned = re.sub(r'\[(?:CENA|SCENE):.*?\]', '', line, flags=re.IGNORECASE).strip()
+            if cleaned:
+                spoken_lines.append(fix_pronunciation(cleaned, lang_label))
+    full_spoken = ' '.join(spoken_lines) if spoken_lines else raw
+    return normalize_text(full_spoken), normalize_text(raw)
+
+def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpeg_exe):
+    import speech_recognition as sr
+    for start_sec, dur_sec in [('0.0', '8.0'), ('0.6', '7.2'), ('1.2', '6.5'), ('0.0', '4.5')]:
+        try:
+            cmd = [ffmpeg_exe, '-y', '-ss', start_sec, '-i', video_path, '-t', dur_sec, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', temp_wav]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
+            with sr.AudioFile(temp_wav) as source:
+                audio_data = recognizer.record(source)
+            text = recognizer.recognize_google(audio_data, language=sr_lang_code)
+            if text and len(text.strip()) >= 4:
+                return text
+        except Exception:
+            continue
+    return ""
+
+def find_position_in_script(transcript, full_spoken_norm, lang_label):
+    from rapidfuzz import fuzz
+    t_norm = normalize_text(transcript)
+    if any(kw in t_norm for kw in LANGUAGES[lang_label]["end_keywords"]):
+        return len(full_spoken_norm) + 500, 100
+    if t_norm and len(t_norm) >= 4:
+        words = t_norm.split()
+        script_len = len(full_spoken_norm)
+        for n_words in (6, 5, 4, 3, 2):
+            if len(words) >= n_words:
+                for offset in range(min(3, len(words) - n_words + 1)):
+                    snippet = ' '.join(words[offset:offset + n_words])
+                    if len(snippet) >= 8:
+                        idx = full_spoken_norm.find(snippet)
+                        if idx != -1:
+                            return max(0, idx - (offset * 6)), 100
+        best_pos, best_score = 0, -1
+        w_size = max(len(t_norm), 25)
+        for pos in range(0, max(1, script_len - 8), 3):
+            seg = full_spoken_norm[pos:min(script_len, pos + w_size + 20)]
+            score = (fuzz.partial_ratio(t_norm, seg) * 0.65) + (fuzz.token_set_ratio(t_norm, seg) * 0.35)
+            if score > best_score:
+                best_score, best_pos = score, pos
+        if best_score >= 50:
+            return best_pos, best_score
+    return 999999, 0
+
+st.title("🎬 Estúdio Completo Google Flow — Upload de Personagens, Voz Fixa & Diálogos")
+
+secret_key = ""
+try:
+    secret_key = st.secrets.get("API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
+except Exception:
+    secret_key = ""
+
+col_top1, col_top2 = st.columns([2, 1])
+with col_top1:
+    selected_lang = st.selectbox("🌍 Idioma do Projeto:", list(LANGUAGES.keys()))
+with col_top2:
+    api_key_input = st.text_input(
+        "🔑 Chave IA Grátis (Groq 'gsk_...' ou Google):",
+        value=secret_key,
+        type="password",
+        placeholder="Cole sua chave gsk_... e aperte ENTER"
+    )
+
+tab1, tab2 = st.tabs(["📝 1. Personagens, Roteiro IA & Prompts", "🎞️ 2. Organizador & Entrega do Vídeo Final"])
+
+with tab1:
+    st.markdown("### 🎛️ Passo 1: Modo de Áudio e Upload dos Personagens")
+    audio_mode = st.radio(
+        "Como será o áudio e a atuação deste vídeo?",
+        [
+            "🎙️ Modo 1: Narrador Fixo (Trava Absoluta da Mesma Voz do Início ao Fim)",
+            "🗣️ Modo 2: Diálogo Entre Personagens (Upload de Fotos + DNA Físico/Vocal Fixo + Lip-Sync)",
+            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Cenas sincronizadas + troca na montagem)"
+        ]
+    )
+
+    voice_choice = "🎙️ Voz Masculina Fixa (Barítono 35 anos)"
+    custom_voice_timbre = ""
+    mute_flow_for_custom = False
+    has_ref_image = False
+
+    if "Modo 1" in audio_mode or "Modo 3" in audio_mode:
+        cm1, cm2 = st.columns([1, 1])
+        with cm1:
+            if "Modo 1" in audio_mode:
+                voice_choice = st.radio("Gênero da Voz Fixa:", ["🎙️ Voz Masculina Fixa (Barítono 35 anos)", "🎙️ Voz Feminina Fixa (Mezzo-Soprano 32 anos)"])
+                custom_voice_timbre = st.text_input("Assinatura extra de voz (Opcional):", placeholder="Ex: Sotaque mineiro acolhedor, ritmo calmo")
+            else:
+                ref_audio_file = st.file_uploader("🎵 Opcional: Suba seu áudio (.mp3, .wav, .m4a) para transcrever de 8 em 8s:", type=["mp3", "wav", "m4a", "ogg"])
+                mute_flow_for_custom = st.checkbox("Gerar vídeos mudos no Flow", value=False)
+                if ref_audio_file is not None:
+                    if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO DE 8 EM 8 SEGUNDOS", use_container_width=True):
+                        with st.spinner("Transcrevendo seu áudio em blocos de 8 segundos..."):
+                            ffmpeg_exe = get_ffmpeg()
+                            tmp_aud = os.path.join(tempfile.mkdtemp(), ref_audio_file.name)
+                            with open(tmp_aud, "wb") as fa:
+                                fa.write(ref_audio_file.getbuffer())
+                            t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe)
+                            st.session_state["saved_script"] = t_script
+                            st.success(f"✅ Áudio transcrito ({dur_s:.1f}s -> {n_sc} cenas)!")
+        with cm2:
+            up_single = st.file_uploader("📸 Opcional: Subir Foto do Personagem Fixo:", type=["png", "jpg", "jpeg", "webp"], key="up_single")
+            if up_single is not None:
+                has_ref_image = True
+                st.image(up_single, width=140, caption="Personagem de Referência")
+                if st.button("🔍 EXTRAIR DNA FÍSICO DA FOTO (IA)", key="btn_single_dna", use_container_width=True):
+                    with st.spinner("Analisando cada detalhe do rosto e roupa na foto..."):
+                        dna_res, err_v = analyze_character_photo(up_single, api_key_input)
+                        if err_v:
+                            st.error(err_v)
+                        else:
+                            st.session_state["dna_single_char"] = dna_res
+                            st.success("✅ DNA visual extraído e travado!")
+            st.text_area("🧬 DNA Físico Fixo do Protagonista (Opcional — em Inglês):", key="dna_single_char", height=90)
+
+    elif "Modo 2" in audio_mode:
+        st.info("💡 **Trava Dupla de Identidade:** Suba a foto do Personagem A e B abaixo! A IA lê a foto e gera um **Cartão Duplo 16:9** para anexar como *Ingredient* no Google Flow.")
+        up_col1, up_col2 = st.columns([1, 1])
+        with up_col1:
+            up_char_a = st.file_uploader("📸 Subir Foto do Personagem A (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_a")
+            if up_char_a is not None:
+                has_ref_image = True
+                st.image(up_char_a, width=150, caption="Foto Personagem A")
+        with up_col2:
+            up_char_b = st.file_uploader("📸 Subir Foto do Personagem B (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_b")
+            if up_char_b is not None:
+                has_ref_image = True
+                st.image(up_char_b, width=150, caption="Foto Personagem B")
+
+        if up_char_a is not None or up_char_b is not None:
+            b_col1, b_col2 = st.columns([1, 1])
+            with b_col1:
+                if st.button("🔍 EXTRAIR DNA FÍSICO E ROUPAS DAS FOTOS ENVIADAS (IA)", type="primary", use_container_width=True):
+                    with st.spinner("Lendo traços faciais, cabelo e roupas exatas nas fotos..."):
+                        if up_char_a is not None:
+                            dna_a, err_a = analyze_character_photo(up_char_a, api_key_input)
+                            if err_a:
+                                st.error(f"Foto A: {err_a}")
+                            else:
+                                st.session_state["dna_char_a"] = dna_a
+                        if up_char_b is not None:
+                            dna_b, err_b = analyze_character_photo(up_char_b, api_key_input)
+                            if err_b:
+                                st.error(f"Foto B: {err_b}")
+                            else:
+                                st.session_state["dna_char_b"] = dna_b
+                        st.success("✅ DNA físico extraído das fotos com precisão!")
+            with b_col2:
+                duo_png = build_duo_reference_card(up_char_a, up_char_b)
+                if duo_png:
+                    st.download_button("🖼️ Baixar Cartão 16:9 dos Personagens (Subir no Flow)", data=duo_png, file_name="Referencia_Personagens_Flow_16x9.png", mime="image/png", use_container_width=True)
+
+        cd1, cd2 = st.columns([1, 1])
+        with cd1:
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=110)
+            st.text_input("🎙️ Trava de Voz — Personagem A:", key="voice_char_a")
+        with cd2:
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=110)
+            st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
+
+    st.divider()
+    st.markdown("### 🤖 Passo 2: Gerar Roteiro com Memória de Continuidade")
+    col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
+    with col_t1:
+        video_title = st.text_input("Título, Tema ou Situação do Diálogo:", placeholder="Ex: Pai caipira descobrindo o namorado da filha / 5 Cidades de MG")
+    with col_t2:
+        duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
+    with col_t3:
+        total_scenes_calc = max(4, int((duration_min * 60) // 8))
+        st.metric("Total de Cenas (8s)", f"{total_scenes_calc} cenas")
+
+    cs1, cs2 = st.columns([1, 1])
+    with cs1:
+        style_choice = st.selectbox("Estilo Visual Fixo:", list(STYLE_PRESETS.keys()))
+        custom_style = st.text_input("Descreva o estilo visual personalizado:") if style_choice == "Personalizado (Definir abaixo)" else ""
+
+        if st.button("🪄 CRIAR ROTEIRO COMPLETO PELA IA", use_container_width=True):
+            if not video_title.strip():
+                st.warning("Digite o tema ou situação primeiro.")
+            else:
+                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas..."):
+                    script_out, err_msg = generate_ai_script(
+                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode,
+                        st.session_state.get("dna_char_a", ""), st.session_state.get("dna_char_b", ""),
+                        st.session_state.get("dna_single_char", ""), api_key_input
+                    )
+                    if err_msg:
+                        st.error(err_msg)
+                    else:
+                        st.session_state["saved_script"] = script_out
+                        st.success("✅ Roteiro pronto!")
+
+    with cs2:
+        script_for_prompts = st.text_area("Roteiro Completo (Editável):", value=st.session_state["saved_script"], height=260)
+
+    if st.button("✨ GERAR TODOS OS PROMPTS BLINDADOS PARA O GOOGLE FLOW", type="primary", use_container_width=True):
+        if not script_for_prompts.strip():
+            st.warning("Gere ou cole um roteiro primeiro.")
+        else:
+            st.session_state["saved_script"] = script_for_prompts
+            scenes = extract_scenes_for_prompts(script_for_prompts, selected_lang)
+            visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
+            lang_en_name = LANGUAGES[selected_lang]["name_en"]
+            ref_tag = "Match 100% the uploaded reference character image(s) in face, hair, and exact outfit. " if has_ref_image else ""
+
+            st.success(f"✅ {len(scenes)} Prompts gerados! Copie abaixo, gere os clipes no Google Flow e depois junte tudo na Aba 2.")
+            all_prompts_text = []
+
+            for idx, sc in enumerate(scenes, 1):
+                if "Modo 2" in audio_mode:
+                    is_a = (sc["speaker"] != "B")
+                    active_char = "Character A" if is_a else "Character B"
+                    silent_char = "Character B" if is_a else "Character A"
+                    active_voice = st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")
+                    dna_a_txt = st.session_state.get("dna_char_a", DEFAULT_CHAR_A)
+                    dna_b_txt = st.session_state.get("dna_char_b", DEFAULT_CHAR_B)
+                    p_box = (
+                        f"[VISUAL & WARDROBE DNA LOCK: {visual_anchor} {ref_tag}"
+                        f"Character A MUST ALWAYS be: {dna_a_txt} (NEVER change shirt color, hat, or facial hair). "
+                        f"Character B MUST ALWAYS be: {dna_b_txt} (NEVER change hairstyle, face, or outfit colors). "
+                        f"Single continuous 8-second camera shot, same exact room lighting, zero cuts, zero text on screen.]\n"
+                        f"SCENE ACTION: {sc['visual']}. ONLY {active_char} moves their mouth with natural realistic lip-sync while {silent_char} keeps mouth completely closed listening.\n"
+                        f"[DIALOGUE VOICEPRINT LOCK: {active_char} speaks with {active_voice}, native {lang_en_name}. "
+                        f"Start with 0.3s clean silence, ZERO whispers before speaking, ZERO background music.] "
+                        f"{active_char} says clearly in {lang_en_name}: \"{sc['spoken']}\""
+                    )
+                elif "Modo 3" in audio_mode and mute_flow_for_custom:
+                    single_dna = st.session_state.get("dna_single_char", "").strip()
+                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
+                    p_box = (
+                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
+                        f"CRITICAL RULE: Single continuous 8-second shot, zero cuts. All characters keep mouths closed in silence. Zero text on screen.]\n"
+                        f"SCENE ACTION: {sc['visual']}.\n"
+                        f"[AUDIO LOCK: Completely silent ambient track, zero speech, zero narration, zero music.]"
+                    )
+                else:
+                    single_dna = st.session_state.get("dna_single_char", "").strip()
+                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
+                    voice_anchor = get_strict_voice_lock(voice_choice, selected_lang, custom_voice_timbre)
+                    p_box = (
+                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
+                        f"CRITICAL RULE: Single continuous 8-second camera shot, zero cuts, zero morphing. "
+                        f"All people on screen MUST keep their mouths closed and silent (strictly no lip-sync). Zero text, zero signs, zero banners.]\n"
+                        f"SCENE ACTION: {sc['visual']}.\n"
+                        f"{voice_anchor} Narrator says clearly in {lang_en_name}: \"{sc['spoken']}\""
+                    )
+
+                all_prompts_text.append(f"=== CENA {idx:03d} ===\n{p_box}\n")
+                with st.expander(f"🎬 Cena {idx:03d} ({sc['speaker']}) — \"{sc['spoken'][:60]}...\"", expanded=(idx <= 3)):
+                    st.code(p_box, language="text")
+
+            st.download_button("📥 Baixar Todos os Prompts (.TXT)", data="\n".join(all_prompts_text), file_name="Prompts_Flow.txt", use_container_width=True)
+
+with tab2:
+    st.subheader(f"Organizador por Voz & Entrega do Vídeo Final ({selected_lang})")
+    st.info("📌 **Fluxo completo:** 1) Gere o roteiro e baixe os Prompts na **Aba 1** ➔ 2) Gere os clipes no **Google Flow** e baixe o `.ZIP` ➔ 3) Suba o `.ZIP` abaixo para receber o **Vídeo Final Pronto (.MP4)**!")
+
+    col1, col2 = st.columns([1, 1])
+    with col1:
+        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo:", value=st.session_state["saved_script"], height=280)
+    with col2:
+        uploaded_files = st.file_uploader("📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):", type=["zip", "mp4"], accept_multiple_files=True)
+        st.markdown("#### 🎧 3. Substituir pelo Seu Próprio Áudio (Opcional)")
+        master_custom_audio = st.file_uploader("Trocar o som do vídeo pela sua própria locução/música (.mp3, .wav, .m4a):", type=["mp3", "wav", "m4a", "ogg"])
+        sort_method = st.radio(
+            "Como ordenar os clipes antes de juntar?",
+            ["🗣️ Escutar a fala dos clipes e ordenar pelo roteiro (Automático)", "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos mudos)"]
+        )
+
+    if st.button("🚀 ORGANIZAR CENAS E ENTREGAR VÍDEO FINAL PRONTO", type="primary", use_container_width=True):
+        if not uploaded_files:
+            st.error("⚠️ Falta enviar os vídeos! Gere as cenas no Google Flow usando os prompts da Aba 1 e suba o arquivo .ZIP na caixa 2 acima.")
+        elif "Escutar" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
+            st.error("Cole o roteiro à esquerda (ou mude para ordenar pelo nome dos arquivos se os vídeos forem mudos).")
+        else:
+            import speech_recognition as sr
+            ffmpeg_exe = get_ffmpeg()
+            work_dir = tempfile.mkdtemp()
+            extract_dir = os.path.join(work_dir, "extraidos")
+            ordered_dir = os.path.join(work_dir, "ordenados")
+            os.makedirs(extract_dir, exist_ok=True)
+            os.makedirs(ordered_dir, exist_ok=True)
+
+            mp4_files = []
+            for uf in uploaded_files:
+                if uf.name.lower().endswith(".zip"):
+                    z_path = os.path.join(work_dir, uf.name)
+                    with open(z_path, "wb") as f:
+                        f.write(uf.getbuffer())
+                    with zipfile.ZipFile(z_path, 'r') as z:
+                        for m in z.namelist():
+                            if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
+                                fn = os.path.basename(m)
+                                if fn:
+                                    t_path = os.path.join(extract_dir, fn)
+                                    with z.open(m) as src, open(t_path, 'wb') as dst:
+                                        shutil.copyfileobj(src, dst)
+                                    if os.path.getsize(t_path) > 1000:
+                                        mp4_files.append(t_path)
+                elif uf.name.lower().endswith(".mp4"):
+                    t_path = os.path.join(extract_dir, uf.name)
+                    with open(t_path, "wb") as f:
+                        f.write(uf.getbuffer())
+                    if os.path.getsize(t_path) > 1000:
+                        mp4_files.append(t_path)
+
+            if not mp4_files:
+                st.error("Nenhum vídeo .MP4 válido foi encontrado dentro do arquivo enviado.")
+            else:
+                results = []
+                p_bar = st.progress(0, text="Processando cenas...")
+                total = len(mp4_files)
+
+                if "Escutar" in sort_method:
+                    full_spoken_norm, _ = parse_script_text(roteiro_input, selected_lang)
+                    recognizer = sr.Recognizer()
+                    temp_wav = os.path.join(work_dir, "_temp.wav")
+                    sr_code = LANGUAGES[selected_lang]["sr_code"]
+                    for idx, v_path in enumerate(mp4_files, 1):
+                        fn = os.path.basename(v_path)
+                        tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
+                        pos, sc = find_position_in_script(tr, full_spoken_norm, selected_lang)
+                        results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'position': pos})
+                        p_bar.progress((idx / total) * 0.75, text=f"Escutando cena {idx}/{total}: '{tr[:45]}...'")
+                    results.sort(key=lambda x: (x['position'], x['original_name']))
+                else:
+                    mp4_files.sort(key=lambda p: os.path.basename(p).lower())
+                    for idx, v_path in enumerate(mp4_files, 1):
+                        results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx})
+                        p_bar.progress((idx / total) * 0.75, text=f"Preparando cena {idx}/{total}...")
+
+                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
+                with open(c_list, 'w', encoding='utf-8') as cf:
+                    for s_num, item in enumerate(results, 1):
+                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
+                        shutil.copy2(item['path'], n_path)
+                        safe_p = n_path.replace("\\", "/")
+                        cf.write(f"file '{safe_p}'\n")
+
+                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
+                p_bar.progress(0.85, text="Unindo todas as cenas em um único vídeo...")
+
+                res = subprocess.run(
+                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
+                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                )
+
+                if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
+                    p_bar.progress(0.90, text="Padronizando formato dos clipes para união segura...")
+                    norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
+                    with open(norm_list, 'w', encoding='utf-8') as nf:
+                        for s_num, item in enumerate(results, 1):
+                            norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
+                            has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+                            if "Audio:" in has_aud:
+                                subprocess.run([
+                                    ffmpeg_exe, '-y', '-i', item['path'],
+                                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30',
+                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                    '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
+                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            else:
+                                subprocess.run([
+                                    ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+                                    '-i', item['path'],
+                                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30',
+                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                    '-c:a', 'aac', '-shortest', norm_clip
+                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
+                                nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
+                    subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                out_mp4 = joined_mp4
+                if master_custom_audio is not None and os.path.exists(joined_mp4):
+                    p_bar.progress(0.95, text="Aplicando o seu próprio áudio no vídeo final...")
+                    custom_aud_path = os.path.join(work_dir, master_custom_audio.name)
+                    with open(custom_aud_path, "wb") as fa:
+                        fa.write(master_custom_audio.getbuffer())
+                    dubbed_mp4 = os.path.join(work_dir, "VIDEO_FINAL_COM_MEU_AUDIO.mp4")
+                    cmd_mux = [
+                        ffmpeg_exe, '-y', '-i', joined_mp4, '-i', custom_aud_path,
+                        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
+                        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', dubbed_mp4
+                    ]
+                    res_mux = subprocess.run(cmd_mux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                    if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
+                        out_mp4 = dubbed_mp4
+
+                p_bar.progress(1.0, text="Concluído!")
+                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
+                    st.session_state["final_video_path"] = out_mp4
+                    st.session_state["final_report"] = results
+                else:
+                    st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique se os arquivos enviados não estão corrompidos.")
+
+    if "final_video_path" in st.session_state and os.path.exists(st.session_state["final_video_path"]):
+        final_p = st.session_state["final_video_path"]
+        size_mb = os.path.getsize(final_p) / (1024 * 1024)
+        st.success(f"✅ VÍDEO FINAL PRONTO! ({len(st.session_state.get('final_report', []))} cenas unidas — {size_mb:.1f} MB)")
+        with open(final_p, "rb") as vf_dl:
+            st.download_button(
+                "💾 BAIXAR VÍDEO COMPLETO PRONTO (.MP4)",
+                data=vf_dl,
+                file_name="VIDEO_FINAL_PRONTO.mp4",
+                mime="video/mp4",
+                type="primary",
+                use_container_width=True
+            )
+        st.video(final_p)
+        with st.expander("📋 Relatório da Ordem das Cenas"):
+            for i, r in enumerate(st.session_state.get("final_report", []), 1):
+                st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *{r['transcript']}*")
+# FIM DO ARQUIVO APP.PY
