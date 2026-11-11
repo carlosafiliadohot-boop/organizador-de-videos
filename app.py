@@ -2,21 +2,97 @@ import os
 import io
 import re
 import math
+import hmac
 import base64
 import shutil
 import zipfile
 import tempfile
+import threading
 import subprocess
 import unicodedata
 import requests
 import streamlit as st
+import streamlit.components.v1 as components
 
-st.set_page_config(page_title="Estudio Global Google Flow", page_icon="🎬", layout="wide")
+st.set_page_config(page_title="Estúdio Pro Ultimate — Automação de Vídeos IA", page_icon="🎬", layout="wide")
+
+@st.cache_resource
+def get_render_semaphore():
+    return threading.Semaphore(2)
 
 @st.cache_resource
 def get_ffmpeg():
     import imageio_ffmpeg
     return imageio_ffmpeg.get_ffmpeg_exe()
+
+# ================= AUTENTICAÇÃO SAAS (SECRETS + SUPABASE AUTOMÁTICO) =================
+def verify_supabase_subscriber(email, password):
+    try:
+        sb_url = str(st.secrets.get("SUPABASE_URL", "")).strip().rstrip("/")
+        sb_key = str(st.secrets.get("SUPABASE_KEY", "")).strip()
+        if not sb_url or not sb_key:
+            return False
+        headers = {"apikey": sb_key, "Authorization": f"Bearer {sb_key}"}
+        r = requests.get(
+            f"{sb_url}/rest/v1/assinantes",
+            headers=headers,
+            params={"email": f"eq.{email}", "ativo": "eq.true", "select": "senha"},
+            timeout=8
+        )
+        if r.status_code == 200 and r.json():
+            db_pass = str(r.json()[0].get("senha", "")).strip()
+            return bool(db_pass and hmac.compare_digest(password, db_pass))
+    except Exception:
+        pass
+    return False
+
+def check_saas_login():
+    if st.session_state.get("authenticated", False):
+        return
+
+    admin_email, admin_pass = "", ""
+    subscribers = {}
+    has_supabase = False
+    try:
+        admin_email = str(st.secrets.get("ADMIN_EMAIL", "admin")).strip().lower()
+        admin_pass = str(st.secrets.get("ADMIN_PASS", "")).strip()
+        raw_subs = st.secrets.get("ASSINANTES", {})
+        subscribers = {str(k).strip().lower(): str(v).strip() for k, v in dict(raw_subs).items()}
+        has_supabase = bool(st.secrets.get("SUPABASE_URL", ""))
+    except Exception:
+        pass
+
+    if not admin_pass and not subscribers and not has_supabase:
+        st.warning("⚠️ Configure `ADMIN_EMAIL`, `ADMIN_PASS` e `[ASSINANTES]` em Manage app -> Settings -> Secrets!")
+        st.stop()
+
+    c1, c2, c3 = st.columns([1, 1.3, 1])
+    with c2:
+        st.markdown("## 🎬 Área de Membros — Estúdio Pro Ultimate")
+        st.caption("Entre com o e-mail e a senha da sua assinatura ativa.")
+        with st.form("saas_login_form"):
+            u_email = st.text_input("📧 E-mail de acesso:", placeholder="seuemail@exemplo.com").strip().lower()
+            u_pass = st.text_input("🔑 Senha:", type="password", placeholder="Sua senha")
+            submit = st.form_submit_button("Acessar Estúdio", type="primary", use_container_width=True)
+
+            if submit:
+                p_clean = u_pass.strip()
+                if admin_pass and hmac.compare_digest(u_email, admin_email) and hmac.compare_digest(p_clean, admin_pass):
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_role"] = "admin"
+                    st.session_state["user_email"] = u_email
+                    st.rerun()
+                elif (u_email in subscribers and hmac.compare_digest(p_clean, subscribers[u_email])) or verify_supabase_subscriber(u_email, p_clean):
+                    st.session_state["authenticated"] = True
+                    st.session_state["user_role"] = "subscriber"
+                    st.session_state["user_email"] = u_email
+                    st.rerun()
+                else:
+                    st.error("❌ E-mail ou senha inválidos (ou assinatura inativa).")
+    st.stop()
+
+check_saas_login()
+# =====================================================================================
 
 DEFAULT_CHAR_A = (
     "52-year-old Brazilian rural father, tanned weathered skin, square jaw, clean-shaven cheeks with a thick "
@@ -29,20 +105,18 @@ DEFAULT_CHAR_B = (
     "medium-blue denim jacket, small silver stud earrings"
 )
 
-if "saved_script" not in st.session_state:
-    st.session_state["saved_script"] = ""
-if "auto_duration_min" not in st.session_state:
-    st.session_state["auto_duration_min"] = 1
-if "dna_char_a" not in st.session_state:
-    st.session_state["dna_char_a"] = DEFAULT_CHAR_A
-if "dna_char_b" not in st.session_state:
-    st.session_state["dna_char_b"] = DEFAULT_CHAR_B
-if "dna_single_char" not in st.session_state:
-    st.session_state["dna_single_char"] = ""
-if "voice_char_a" not in st.session_state:
-    st.session_state["voice_char_a"] = "Deep, gruff, protective 52-year-old rural male baritone voice (105 Hz), calm interior Minas Gerais cadence"
-if "voice_char_b" not in st.session_state:
-    st.session_state["voice_char_b"] = "Clear, bright, natural 22-year-old young female voice (210 Hz), expressive Brazilian cadence"
+for k_def, v_def in {
+    "saved_script": "",
+    "seo_kit_output": "",
+    "auto_duration_min": 1,
+    "dna_char_a": DEFAULT_CHAR_A,
+    "dna_char_b": DEFAULT_CHAR_B,
+    "dna_single_char": "",
+    "voice_char_a": "Deep, gruff, protective 52-year-old rural male baritone voice (105 Hz), calm interior Minas Gerais cadence",
+    "voice_char_b": "Clear, bright, natural 22-year-old young female voice (210 Hz), expressive Brazilian cadence"
+}.items():
+    if k_def not in st.session_state:
+        st.session_state[k_def] = v_def
 
 LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
@@ -88,6 +162,135 @@ STYLE_PRESETS = {
     ),
     "Personalizado (Definir abaixo)": ""
 }
+
+@st.cache_data
+def build_chrome_extension_zip():
+    manifest_str = """{
+  "manifest_version": 3,
+  "name": "Estúdio Pro — Auto-Enviador Google Flow",
+  "version": "1.0",
+  "description": "Dispara automaticamente todas as cenas do Estúdio Pro dentro do Google Flow.",
+  "permissions": ["activeTab", "scripting", "storage"],
+  "host_permissions": ["https://labs.google/*"],
+  "content_scripts": [
+    {
+      "matches": ["https://labs.google/*"],
+      "js": ["content.js"],
+      "run_at": "document_idle"
+    }
+  ]
+}"""
+    content_js_str = r"""(function () {
+  if (document.getElementById("estudio-pro-panel")) return;
+  let isRunning = false, stopRequested = false;
+  const panel = document.createElement("div");
+  panel.id = "estudio-pro-panel";
+  panel.style.cssText = "position:fixed;bottom:20px;right:20px;width:330px;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:12px;padding:14px;z-index:999999;font-family:system-ui,sans-serif;box-shadow:0 12px 30px rgba(0,0,0,0.55);font-size:13px;";
+  panel.innerHTML = `
+    <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
+      <strong style="font-size:14px;color:#60a5fa;">🎬 Estúdio Pro — Auto Flow</strong>
+      <button id="ep-min-btn" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">—</button>
+    </div>
+    <div id="ep-body">
+      <div style="margin-bottom:6px;color:#d1d5db;font-size:12px;">Cole abaixo o conteúdo de <b>Prompts_Flow.txt</b>:</div>
+      <textarea id="ep-prompts" rows="5" placeholder="=== CENA 001 ===..." style="width:100%;box-sizing:border-box;background:#1f2937;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:8px;font-size:12px;"></textarea>
+      <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
+        <label style="font-size:12px;color:#d1d5db;">⏱️ Pausa entre cenas (seg):</label>
+        <input id="ep-delay" type="number" min="5" max="120" value="14" style="width:60px;background:#1f2937;color:#fff;border:1px solid #4b5563;border-radius:6px;padding:4px;text-align:center;"/>
+      </div>
+      <div style="display:flex;gap:8px;margin-top:8px;">
+        <button id="ep-start" style="flex:1;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:9px;font-weight:600;cursor:pointer;">🚀 Iniciar Fila</button>
+        <button id="ep-stop" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-weight:600;cursor:pointer;display:none;">⏹ Parar</button>
+      </div>
+      <div id="ep-status" style="margin-top:8px;font-size:12px;color:#93c5fd;min-height:18px;">Pronto para enviar cenas.</div>
+    </div>`;
+  document.body.appendChild(panel);
+  const bodyDiv = document.getElementById("ep-body");
+  document.getElementById("ep-min-btn").onclick = () => { bodyDiv.style.display = bodyDiv.style.display === "none" ? "block" : "none"; };
+  function parseScenes(raw) {
+    if (!raw || !raw.trim()) return [];
+    const p = raw.split(/===\s*CENA\s*\d+\s*===/i).map(s => s.trim()).filter(Boolean);
+    return p.length > 0 ? p : [raw.trim()];
+  }
+  function findFlowInput() {
+    const els = [...document.querySelectorAll("textarea"), ...document.querySelectorAll('[contenteditable="true"]'), ...document.querySelectorAll('[role="textbox"]')];
+    for (const el of els) {
+      if (el.id === "ep-prompts") continue;
+      const r = el.getBoundingClientRect();
+      if (r.width > 160 && r.height > 24) return el;
+    }
+    return null;
+  }
+  function setNativeText(el, text) {
+    el.focus();
+    if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
+      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
+      if (setter) setter.call(el, text); else el.value = text;
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      el.dispatchEvent(new Event("change", { bubbles: true }));
+    } else {
+      el.innerHTML = "";
+      document.execCommand("insertText", false, text);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
+    }
+  }
+  function triggerSubmit(inputEl) {
+    const btn = [...document.querySelectorAll("button")].find(b => {
+      if (b.id.startsWith("ep-") || b.disabled) return false;
+      const lb = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).toLowerCase();
+      return lb.includes("generate") || lb.includes("gerar") || lb.includes("create") || lb.includes("criar") || lb.includes("arrow_upward") || b.getAttribute("type") === "submit";
+    });
+    if (btn) { btn.click(); return; }
+    inputEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
+  }
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  document.getElementById("ep-stop").onclick = () => { stopRequested = true; };
+  document.getElementById("ep-start").onclick = async () => {
+    if (isRunning) return;
+    const scenes = parseScenes(document.getElementById("ep-prompts").value);
+    const delaySec = Math.max(5, parseInt(document.getElementById("ep-delay").value || "14", 10));
+    const statusEl = document.getElementById("ep-status");
+    if (!scenes.length) { statusEl.innerText = "⚠️ Cole os prompts primeiro!"; return; }
+    if (!findFlowInput()) { statusEl.innerText = "⚠️ Entre em um projeto do Flow onde aparece a caixa de texto!"; return; }
+    isRunning = true; stopRequested = false;
+    document.getElementById("ep-start").style.display = "none";
+    document.getElementById("ep-stop").style.display = "inline-block";
+    for (let i = 0; i < scenes.length; i++) {
+      if (stopRequested) break;
+      const box = findFlowInput();
+      if (!box) { await sleep(4000); i--; continue; }
+      statusEl.innerText = `🎬 Enviando cena ${i + 1}/${scenes.length}...`;
+      setNativeText(box, scenes[i]);
+      await sleep(900);
+      triggerSubmit(box);
+      if (i < scenes.length - 1 && !stopRequested) {
+        for (let s = delaySec; s > 0; s--) {
+          if (stopRequested) break;
+          statusEl.innerText = `✅ Cena ${i + 1}/${scenes.length} enviada! Próxima em ${s}s...`;
+          await sleep(1000);
+        }
+      }
+    }
+    isRunning = false;
+    document.getElementById("ep-start").style.display = "inline-block";
+    document.getElementById("ep-stop").style.display = "none";
+    statusEl.innerText = stopRequested ? "⏹ Fila pausada." : `🎉 Todas as ${scenes.length} cenas enviadas!`;
+  };
+})();"""
+    readme_str = (
+        "COMO INSTALAR A EXTENSÃO VIP ESTÚDIO PRO NO CHROME (15 SEGUNDOS):\n"
+        "1. Extraia este arquivo .ZIP em uma pasta no seu computador.\n"
+        "2. Abra o Chrome (ou Edge/Brave), digite chrome://extensions na barra de endereço e aperte Enter.\n"
+        "3. Ative a chave 'Modo do desenvolvedor' no canto superior direito.\n"
+        "4. Clique em 'Carregar sem compactação' e selecione a pasta extraída (Extensao_Estudio_Pro_Flow).\n"
+        "5. Abra o Google Flow pelo botão do Estúdio: o painel 'Estúdio Pro — Auto Flow' aparecerá no canto inferior direito!"
+    )
+    mem_zip = io.BytesIO()
+    with zipfile.ZipFile(mem_zip, "w", zipfile.ZIP_DEFLATED) as zf:
+        zf.writestr("Extensao_Estudio_Pro_Flow/manifest.json", manifest_str)
+        zf.writestr("Extensao_Estudio_Pro_Flow/content.js", content_js_str)
+        zf.writestr("Extensao_Estudio_Pro_Flow/COMO_INSTALAR.txt", readme_str)
+    return mem_zip.getvalue()
 
 def fix_pronunciation(text, lang_label):
     if not text:
@@ -167,10 +370,64 @@ def get_available_groq_models(clean_key, vision_only=False):
         return ["meta-llama/llama-4-scout-17b-16e-instruct", "meta-llama/llama-4-maverick-17b-128e-instruct"]
     return ["meta-llama/llama-4-scout-17b-16e-instruct", "qwen-qwq-32b", "gemma2-9b-it"]
 
+def call_llm_text(system_msg, user_prompt, api_key, temperature=0.35):
+    clean_key = api_key.strip() if api_key else ""
+    if not clean_key:
+        return "", "⚠️ Cole a sua Chave Gratuita da Groq (começando com gsk_...) lá no topo direito e aperte ENTER!"
+
+    last_error = ""
+    if clean_key.startswith("gsk_"):
+        headers_groq = {"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json"}
+        for groq_model in get_available_groq_models(clean_key)[:6]:
+            try:
+                r_groq = requests.post(
+                    "https://api.groq.com/openai/v1/chat/completions",
+                    headers=headers_groq,
+                    json={
+                        "model": groq_model,
+                        "messages": [
+                            {"role": "system", "content": system_msg},
+                            {"role": "user", "content": user_prompt}
+                        ],
+                        "temperature": temperature,
+                        "max_tokens": 7000
+                    },
+                    timeout=90
+                )
+                if r_groq.status_code == 200:
+                    out = clean_markdown(r_groq.json()["choices"][0]["message"]["content"])
+                    if len(out) >= 40:
+                        return out, None
+                else:
+                    last_error = f"HTTP {r_groq.status_code}: {r_groq.text[:180]}"
+            except Exception as e_g:
+                last_error = str(e_g)
+        return "", f"❌ Erro na sua chave Groq: {last_error}"
+
+    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
+        try:
+            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
+            r_gem = requests.post(
+                g_url,
+                headers={"Content-Type": "application/json"},
+                json={"contents": [{"parts": [{"text": f"{system_msg}\n\n{user_prompt}"}]}], "generationConfig": {"temperature": temperature}},
+                timeout=90
+            )
+            if r_gem.status_code == 200:
+                out = clean_markdown(r_gem.json()["candidates"][0]["content"]["parts"][0]["text"])
+                if len(out) >= 40:
+                    return out, None
+            else:
+                last_error = f"HTTP {r_gem.status_code}: {r_gem.text[:180]}"
+        except Exception as e_req:
+            last_error = str(e_req)
+
+    return "", f"❌ Chave inválida ({last_error}). Gere uma chave gratuita 'gsk_...' em https://console.groq.com/keys!"
+
 def analyze_character_photo(uploaded_img, api_key):
     clean_key = api_key.strip() if api_key else ""
     if not clean_key:
-        return None, "Cole sua chave gratuita da Groq (gsk_...) lá no topo primeiro para analisar a foto!"
+        return None, "⚠️ Cole sua Chave Gratuita da Groq (gsk_...) no topo da página e aperte ENTER antes de analisar a foto!"
 
     img_bytes = uploaded_img.getvalue()
     mime_type = uploaded_img.type or "image/jpeg"
@@ -221,7 +478,7 @@ def analyze_character_photo(uploaded_img, api_key):
                     last_err = f"{v_mod}: HTTP {r_v.status_code}"
             except Exception as ex:
                 last_err = str(ex)
-        return None, f"Não foi possível ler a imagem ({last_err})."
+        return None, f"Não foi possível ler a imagem ({last_err}). Verifique sua chave Groq."
 
     for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
         try:
@@ -238,17 +495,27 @@ def analyze_character_photo(uploaded_img, api_key):
             last_err = str(ex)
     return None, f"Falha ao analisar foto: {last_err}"
 
-def build_duo_reference_card(img_a_file, img_b_file):
+def build_duo_reference_card(img_a_file, img_b_file, is_vertical=False):
     try:
         from PIL import Image
-        canvas = Image.new("RGB", (1280, 720), (240, 238, 232))
-        for idx, f_obj in enumerate([img_a_file, img_b_file]):
-            if f_obj is not None:
-                im = Image.open(io.BytesIO(f_obj.getvalue())).convert("RGB")
-                im.thumbnail((610, 680))
-                x_off = (idx * 640) + (640 - im.width) // 2
-                y_off = (720 - im.height) // 2
-                canvas.paste(im, (x_off, y_off))
+        if is_vertical:
+            canvas = Image.new("RGB", (720, 1280), (240, 238, 232))
+            for idx, f_obj in enumerate([img_a_file, img_b_file]):
+                if f_obj is not None:
+                    im = Image.open(io.BytesIO(f_obj.getvalue())).convert("RGB")
+                    im.thumbnail((680, 600))
+                    x_off = (720 - im.width) // 2
+                    y_off = (idx * 640) + (640 - im.height) // 2
+                    canvas.paste(im, (x_off, y_off))
+        else:
+            canvas = Image.new("RGB", (1280, 720), (240, 238, 232))
+            for idx, f_obj in enumerate([img_a_file, img_b_file]):
+                if f_obj is not None:
+                    im = Image.open(io.BytesIO(f_obj.getvalue())).convert("RGB")
+                    im.thumbnail((610, 680))
+                    x_off = (idx * 640) + (640 - im.width) // 2
+                    y_off = (720 - im.height) // 2
+                    canvas.paste(im, (x_off, y_off))
         out_buf = io.BytesIO()
         canvas.save(out_buf, format="PNG")
         return out_buf.getvalue()
@@ -262,6 +529,9 @@ def get_audio_duration_sec(audio_path, ffmpeg_exe):
         return int(m.group(1)) * 3600 + int(m.group(2)) * 60 + float(m.group(3))
     return 60.0
 
+def get_media_duration_sec(media_path, ffmpeg_exe):
+    return get_audio_duration_sec(media_path, ffmpeg_exe)
+
 def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
     import speech_recognition as sr
     dur = get_audio_duration_sec(audio_path, ffmpeg_exe)
@@ -269,29 +539,33 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
     recognizer = sr.Recognizer()
     work_dir = tempfile.mkdtemp()
     blocks = []
-    for i in range(num_chunks):
-        start_s = i * 8
-        wav_chunk = os.path.join(work_dir, f"chunk_{i}.wav")
-        cmd = [ffmpeg_exe, '-y', '-ss', str(start_s), '-i', audio_path, '-t', '8.0', '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', wav_chunk]
-        subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
-        spoken_piece = ""
-        try:
-            with sr.AudioFile(wav_chunk) as src:
-                adata = recognizer.record(src)
-            spoken_piece = recognizer.recognize_google(adata, language=sr_lang_code)
-        except Exception:
-            spoken_piece = f"Trecho narrado da cena {i+1}"
-        t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
-        t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
-        blocks.append(f"[{t1} - {t2}]\n[CENA: Single continuous cinematic shot illustrating: {spoken_piece}, characters with mouths closed in silence]\nLOCUÇÃO: {spoken_piece}")
+    try:
+        for i in range(num_chunks):
+            start_s = i * 8
+            wav_chunk = os.path.join(work_dir, f"chunk_{i}.wav")
+            cmd = [ffmpeg_exe, '-y', '-ss', str(start_s), '-i', audio_path, '-t', '8.0', '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', wav_chunk]
+            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
+            spoken_piece = ""
+            try:
+                with sr.AudioFile(wav_chunk) as src:
+                    adata = recognizer.record(src)
+                spoken_piece = recognizer.recognize_google(adata, language=sr_lang_code)
+            except Exception:
+                spoken_piece = f"Trecho narrado da cena {i+1}"
+            t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
+            t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
+            blocks.append(f"[{t1} - {t2}]\n[CENA: Single continuous cinematic shot illustrating: {spoken_piece}, characters with mouths closed in silence]\nLOCUÇÃO: {spoken_piece}")
+    finally:
+        shutil.rmtree(work_dir, ignore_errors=True)
     return "\n\n".join(blocks), dur, num_chunks
 
-def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, char_a_desc="", char_b_desc="", single_char_desc="", api_key=""):
+def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, aspect_framing, char_a_desc="", char_b_desc="", single_char_desc="", api_key=""):
     lang_en = LANGUAGES[lang_label]["name_en"]
     if "Diálogo" in audio_mode:
         prompt_text = (
-            f"You are a master Brazilian screenwriter creating an authentic, viral, high-retention dialogue scene.\n"
+            f"You are a master screenwriter creating an authentic, viral, high-retention dialogue video.\n"
             f"Story / Situation: '{title}'\n"
+            f"Video Framing: {aspect_framing}\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n"
             f"Character A (Fixed Identity): {char_a_desc}\n"
             f"Character B (Fixed Identity): {char_b_desc}\n\n"
@@ -299,10 +573,10 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"1. STRICT PROGRESSIVE MEMORY (ZERO REPEATED QUESTIONS): Track every detail revealed in earlier scenes! Never repeat an already-answered question in later scenes. Advance logically.\n"
             f"2. 100% IDIOMATIC NATIVE SPEECH: Write authentic everyday {lang_en}. Every line MUST have strictly 12 to 17 words.\n"
             f"3. ONE SPEAKER PER 8-SECOND SCENE: Alternate between PERSONAGEM A and PERSONAGEM B.\n"
-            f"4. FIXED SETTING LOCK: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes.\n\n"
+            f"4. FIXED SETTING LOCK: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes, framed specifically for {aspect_framing}.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, no intro/outro):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Medium two-shot in the exact same room, Character A speaking expressively while Character B listens silently, zero text]\n"
+            f"[CENA: {aspect_framing} medium two-shot in the exact same room, Character A speaking expressively while Character B listens silently, zero text]\n"
             f"PERSONAGEM A: Authentic natural line in {lang_en} (12-17 words, zero abbreviations)."
         )
     else:
@@ -318,79 +592,51 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
         prompt_text = (
             f"You are a rigorous, fact-checked documentary researcher and scriptwriter.\n"
             f"Topic / Title: '{title}'\n"
+            f"Video Framing: {aspect_framing}\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
             f"STRICT FACTUAL ACCURACY & PRONUNCIATION RULES:\n"
             f"1. 100% VERIFIED REAL FACTS ONLY: Never invent local contests, fake dates, or guessed weights.\n"
             f"2. PRONUNCIATION-FRIENDLY: Write ALL numbers, units, and acronyms spelled out in full words in {lang_en}.\n"
             f"3. TIMING: Every LOCUÇÃO MUST have strictly 14 to 18 words in {lang_en}. Scene {num_scenes} ends with a Call-to-Action.\n"
-            f"4. CLEAN VISUALS: Every [CENA: ...] must be a single continuous shot in English featuring {char_hint}, zero text, mouths closed.\n\n"
+            f"4. CLEAN VISUALS: Every [CENA: ...] must be a single continuous shot ({aspect_framing}) in English featuring {char_hint}, zero text, mouths closed.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Single continuous shot in English, no text/signs, mouths closed]\n"
+            f"[CENA: {aspect_framing} single continuous shot in English, no text/signs, mouths closed]\n"
             f"LOCUÇÃO: Verified narration in {lang_en} (14-18 words, zero abbreviations)."
         )
 
-    clean_key = api_key.strip() if api_key else ""
-    if not clean_key:
-        return "", "⚠️ Cole sua chave gratuita da Groq (gsk_...) lá no canto superior direito e aperte ENTER!"
-
-    last_error = ""
     temp_val = 0.45 if "Diálogo" in audio_mode else 0.2
+    sys_msg = "Output ONLY the requested formatted script scenes. Maintain strict continuity and natural expressions."
+    out, err = call_llm_text(sys_msg, prompt_text, api_key, temperature=temp_val)
+    if err:
+        return "", err
 
-    if clean_key.startswith("gsk_"):
-        headers_groq = {"Authorization": f"Bearer {clean_key}", "Content-Type": "application/json"}
-        for groq_model in get_available_groq_models(clean_key)[:6]:
-            try:
-                r_groq = requests.post(
-                    "https://api.groq.com/openai/v1/chat/completions",
-                    headers=headers_groq,
-                    json={
-                        "model": groq_model,
-                        "messages": [
-                            {"role": "system", "content": "Output ONLY the requested formatted script scenes. Maintain strict continuity and natural expressions."},
-                            {"role": "user", "content": prompt_text}
-                        ],
-                        "temperature": temp_val,
-                        "max_tokens": 7000
-                    },
-                    timeout=90
-                )
-                if r_groq.status_code == 200:
-                    out = clean_markdown(r_groq.json()["choices"][0]["message"]["content"])
-                    if len(out) >= 60:
-                        lines_fixed = []
-                        for ln in out.splitlines():
-                            if re.match(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|PERSONAGEM\s*[AB12])\s*:', ln.strip(), re.IGNORECASE):
-                                prefix, body = ln.split(":", 1)
-                                lines_fixed.append(f"{prefix.strip()}: {fix_pronunciation(body, lang_label)}")
-                            else:
-                                lines_fixed.append(ln)
-                        return "\n".join(lines_fixed), None
-                else:
-                    last_error = f"HTTP {r_groq.status_code}: {r_groq.text[:180]}"
-            except Exception as e_g:
-                last_error = str(e_g)
-        return "", f"❌ Erro na Groq: {last_error}"
+    lines_fixed = []
+    for ln in out.splitlines():
+        if re.match(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|PERSONAGEM\s*[AB12])\s*:', ln.strip(), re.IGNORECASE):
+            prefix, body = ln.split(":", 1)
+            lines_fixed.append(f"{prefix.strip()}: {fix_pronunciation(body, lang_label)}")
+        else:
+            lines_fixed.append(ln)
+    return "\n".join(lines_fixed), None
 
-    for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
-        try:
-            g_url = f"https://generativelanguage.googleapis.com/v1beta/models/{model_id}:generateContent?key={clean_key}"
-            r_gem = requests.post(
-                g_url,
-                headers={"Content-Type": "application/json"},
-                json={"contents": [{"parts": [{"text": prompt_text}]}], "generationConfig": {"temperature": temp_val}},
-                timeout=90
-            )
-            if r_gem.status_code == 200:
-                out = clean_markdown(r_gem.json()["candidates"][0]["content"]["parts"][0]["text"])
-                if len(out) >= 60:
-                    return out, None
-            else:
-                last_error = f"HTTP {r_gem.status_code}: {r_gem.text[:180]}"
-        except Exception as e_req:
-            last_error = str(e_req)
-
-    return "", f"❌ Falha na chave ({last_error}). Use sua chave 'gsk_...' da Groq!"
+def generate_seo_and_thumbnail_kit(title, script_text, lang_label, aspect_label, style_choice, char_dna, api_key):
+    lang_en = LANGUAGES[lang_label]["name_en"]
+    orient = "9:16 vertical cover (TikTok/Shorts/Reels)" if "9:16" in aspect_label else "16:9 horizontal YouTube Thumbnail"
+    seo_prompt = (
+        f"Based on the video topic '{title}' and the script below, generate a complete high-CTR publishing kit in {lang_en} "
+        f"(except the Image Prompt which MUST be in English).\n\n"
+        f"Script:\n{script_text[:3500]}\n\n"
+        f"Style: {style_choice}\n"
+        f"Character DNA: {char_dna}\n\n"
+        f"Deliver cleanly organized with these exact headings:\n"
+        f"1. 🔥 5 TÍTULOS MAGNÉTICOS DE ALTO CTR (curiosity-driven, punchy)\n"
+        f"2. 📝 DESCRIÇÃO OTIMIZADA COM SEO + CAPÍTULOS (TIMESTAMPS starting at 00:00)\n"
+        f"3. 🏷️ 20 TAGS DE ALTO VOLUME (comma-separated in a single line ready to copy)\n"
+        f"4. 🖼️ PROMPT PRONTO PARA CAPA / THUMBNAIL ({orient}, in English, ultra-vivid facial expression/visual hook, matching exact Character DNA, zero gibberish text)"
+    )
+    sys_msg = "You are a YouTube & TikTok viral growth strategist. Deliver ready-to-copy metadata."
+    return call_llm_text(sys_msg, seo_prompt, api_key, temperature=0.5)
 
 def extract_scenes_for_prompts(raw_script, lang_label):
     blocks = re.split(r'\n\s*\n', raw_script.strip())
@@ -421,6 +667,50 @@ def extract_scenes_for_prompts(raw_script, lang_label):
                 visual = "Single continuous wide cinematic shot matching the context, zero text on screen"
             scenes.append({"visual": visual, "spoken": spoken, "speaker": speaker_tag})
     return scenes
+
+def format_srt_timestamp(seconds_float):
+    ms = int(round((seconds_float - int(seconds_float)) * 1000))
+    s_int = int(seconds_float)
+    hrs = s_int // 3600
+    mins = (s_int % 3600) // 60
+    secs = s_int % 60
+    return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
+
+def build_synchronized_srt(ordered_results, raw_script, lang_label):
+    script_scenes = extract_scenes_for_prompts(raw_script, lang_label)
+    srt_blocks = []
+    curr_time = 0.0
+    sub_idx = 1
+
+    for i, item in enumerate(ordered_results):
+        clip_dur = item.get("duration", 8.0)
+        if clip_dur <= 0.5:
+            clip_dur = 8.0
+
+        text_line = ""
+        if i < len(script_scenes) and script_scenes[i]["spoken"]:
+            text_line = script_scenes[i]["spoken"]
+        elif item.get("transcript") and item["transcript"] != "(Ordenado por nome)":
+            text_line = item["transcript"]
+
+        if text_line:
+            words = text_line.split()
+            if len(words) > 9:
+                mid = len(words) // 2
+                part1 = " ".join(words[:mid])
+                part2 = " ".join(words[mid:])
+                half_dur = clip_dur / 2.0
+                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time)} --> {format_srt_timestamp(curr_time + half_dur - 0.08)}\n{part1}\n")
+                sub_idx += 1
+                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time + half_dur)} --> {format_srt_timestamp(curr_time + clip_dur - 0.12)}\n{part2}\n")
+                sub_idx += 1
+            else:
+                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time)} --> {format_srt_timestamp(curr_time + clip_dur - 0.12)}\n{text_line}\n")
+                sub_idx += 1
+
+        curr_time += clip_dur
+
+    return "\n".join(srt_blocks)
 
 def normalize_text(text):
     if not text:
@@ -488,28 +778,94 @@ def find_position_in_script(transcript, full_spoken_norm, lang_label):
             return best_pos, best_score
     return 999999, 0
 
-st.title("🎬 Estúdio Completo Google Flow — Upload de Personagens, Voz Fixa & Diálogos")
+# ================= TOPO DO ESTÚDIO & VÍDEO TUTORIAL =================
+is_admin = (st.session_state.get("user_role") == "admin")
+col_hdr1, col_hdr2 = st.columns([5, 1])
+with col_hdr1:
+    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, Roteiros, Legendas & SEO")
+with col_hdr2:
+    st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
+    if st.button("🔒 Sair", use_container_width=True):
+        for k in list(st.session_state.keys()):
+            del st.session_state[k]
+        st.rerun()
 
-secret_key = ""
+tutorial_url = ""
 try:
-    secret_key = st.secrets.get("API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")
+    tutorial_url = str(st.secrets.get("TUTORIAL_VIDEO_URL", "")).strip()
 except Exception:
-    secret_key = ""
+    tutorial_url = ""
 
-col_top1, col_top2 = st.columns([2, 1])
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo em 3 minutos (Guia para Iniciantes)"):
+    if tutorial_url:
+        st.video(tutorial_url)
+    st.markdown(
+        "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)** com seu Google, clique em *Create API Key*, copie o código `gsk_...` e cole no campo ao lado.\n"
+        "2. **Crie o Roteiro e os Prompts (Aba 1):** Escolha **16:9 (YouTube)** ou **9:16 (TikTok/Shorts/Reels)**, suba fotos dos personagens se desejar e gere os prompts blindados.\n"
+        "3. **Dispare no Automático para o Google Flow:** Baixe a **Extensão Chrome VIP** abaixo, clique em **Abrir Google Flow em Janela Lateral**, cole seus prompts no painel azul e deixe ela enviar todas as cenas sozinha!\n"
+        "4. **Receba Tudo Pronto (Abas 2 e 3):** Suba o `.ZIP` na **Aba 2** para juntar por voz, adicionar música de fundo e baixar o `.MP4` + legenda `.SRT`. Na **Aba 3**, gere títulos virais, descrição com capítulos e prompt da capa!"
+    )
+
+col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
 with col_top1:
     selected_lang = st.selectbox("🌍 Idioma do Projeto:", list(LANGUAGES.keys()))
 with col_top2:
-    api_key_input = st.text_input(
-        "🔑 Chave IA Grátis (Groq 'gsk_...' ou Google):",
-        value=secret_key,
-        type="password",
-        placeholder="Cole sua chave gsk_... e aperte ENTER"
+    aspect_ratio = st.selectbox(
+        "📐 Formato da Tela:",
+        ["🖥️ 16:9 Horizontal (YouTube Longo)", "📱 9:16 Vertical (TikTok / Shorts / Reels)"]
     )
+    is_vertical = ("9:16" in aspect_ratio)
+    aspect_prompt_tag = "Vertical 9:16 portrait smartphone framing (720x1280), centered vertical subject composition" if is_vertical else "Horizontal 16:9 widescreen cinema framing (1280x720)"
 
-tab1, tab2 = st.tabs(["📝 1. Personagens, Roteiro IA & Prompts", "🎞️ 2. Organizador & Entrega do Vídeo Final"])
+with col_top3:
+    if is_admin:
+        admin_secret_key = ""
+        try:
+            admin_secret_key = str(st.secrets.get("API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")).strip()
+        except Exception:
+            admin_secret_key = ""
+        override_key = st.text_input(
+            "🔑 Modo Admin (Sua chave oculta já está ativa — ou cole outra):",
+            value="",
+            type="password",
+            placeholder="Usando sua API_KEY oculta automaticamente"
+        )
+        active_api_key = override_key.strip() if override_key.strip() else admin_secret_key
+    else:
+        active_api_key = st.text_input(
+            "🔑 Sua Chave Gratuita Groq ('gsk_...' — cole e aperte ENTER):",
+            value="",
+            type="password",
+            placeholder="Pegue grátis em console.groq.com/keys"
+        ).strip()
+
+tab1, tab2, tab3 = st.tabs([
+    "📝 1. Personagens, Roteiro & Prompts",
+    "🎞️ 2. Montagem, Música de Fundo & Legendas (.SRT)",
+    "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
+])
 
 with tab1:
+    # ======= BARRA CONECTORA GOOGLE FLOW + EXTENSÃO VIP AUTOMÁTICA =======
+    cf_btn1, cf_btn2 = st.columns([1, 1])
+    with cf_btn1:
+        components.html(
+            """<button onclick="window.open('https://labs.google/fx/pt/tools/flow','FlowPopup','width=980,height=860,left=920,top=60');"
+            style="width:100%;padding:10px 14px;background:#1d4ed8;color:white;border:none;border-radius:8px;font-weight:600;font-family:sans-serif;cursor:pointer;font-size:14px;">
+            ⚡ Abrir Google Flow em Janela Lateral (Login Seguro)
+            </button>""",
+            height=48
+        )
+    with cf_btn2:
+        st.download_button(
+            "🧩 Baixar Extensão Chrome VIP (Envia Cenas pro Flow no Automático)",
+            data=build_chrome_extension_zip(),
+            file_name="Extensao_VIP_Estudio_Pro_Flow.zip",
+            mime="application/zip",
+            use_container_width=True
+        )
+    # =====================================================================
+
     st.markdown("### 🎛️ Passo 1: Modo de Áudio e Upload dos Personagens")
     audio_mode = st.radio(
         "Como será o áudio e a atuação deste vídeo?",
@@ -538,20 +894,24 @@ with tab1:
                     if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO DE 8 EM 8 SEGUNDOS", use_container_width=True):
                         with st.spinner("Transcrevendo seu áudio em blocos de 8 segundos..."):
                             ffmpeg_exe = get_ffmpeg()
-                            tmp_aud = os.path.join(tempfile.mkdtemp(), ref_audio_file.name)
-                            with open(tmp_aud, "wb") as fa:
-                                fa.write(ref_audio_file.getbuffer())
-                            t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe)
-                            st.session_state["saved_script"] = t_script
-                            st.success(f"✅ Áudio transcrito ({dur_s:.1f}s -> {n_sc} cenas)!")
+                            tmp_dir_a = tempfile.mkdtemp()
+                            try:
+                                tmp_aud = os.path.join(tmp_dir_a, ref_audio_file.name)
+                                with open(tmp_aud, "wb") as fa:
+                                    fa.write(ref_audio_file.getbuffer())
+                                t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe)
+                                st.session_state["saved_script"] = t_script
+                                st.success(f"✅ Áudio transcrito ({dur_s:.1f}s -> {n_sc} cenas)!")
+                            finally:
+                                shutil.rmtree(tmp_dir_a, ignore_errors=True)
         with cm2:
-            up_single = st.file_uploader("📸 Opcional: Subir Foto do Personagem Fixo:", type=["png", "jpg", "jpeg", "webp"], key="up_single")
+            up_single = st.file_uploader("📸 Opcional: Subir Foto do Personagem ou Produto Fixo:", type=["png", "jpg", "jpeg", "webp"], key="up_single")
             if up_single is not None:
                 has_ref_image = True
-                st.image(up_single, width=140, caption="Personagem de Referência")
+                st.image(up_single, width=140, caption="Referência Visual")
                 if st.button("🔍 EXTRAIR DNA FÍSICO DA FOTO (IA)", key="btn_single_dna", use_container_width=True):
-                    with st.spinner("Analisando cada detalhe do rosto e roupa na foto..."):
-                        dna_res, err_v = analyze_character_photo(up_single, api_key_input)
+                    with st.spinner("Analisando cada detalhe na foto..."):
+                        dna_res, err_v = analyze_character_photo(up_single, active_api_key)
                         if err_v:
                             st.error(err_v)
                         else:
@@ -560,18 +920,19 @@ with tab1:
             st.text_area("🧬 DNA Físico Fixo do Protagonista (Opcional — em Inglês):", key="dna_single_char", height=90)
 
     elif "Modo 2" in audio_mode:
-        st.info("💡 **Trava Dupla de Identidade:** Suba a foto do Personagem A e B abaixo! A IA lê a foto e gera um **Cartão Duplo 16:9** para anexar como *Ingredient* no Google Flow.")
+        orient_label = "9:16" if is_vertical else "16:9"
+        st.info(f"💡 **Trava Dupla de Identidade ({orient_label}):** Suba a foto do Personagem A e B abaixo! A IA extrai os detalhes e monta o **Cartão Duplo {orient_label}** para subir como *Ingredient* no Google Flow.")
         up_col1, up_col2 = st.columns([1, 1])
         with up_col1:
             up_char_a = st.file_uploader("📸 Subir Foto do Personagem A (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_a")
             if up_char_a is not None:
                 has_ref_image = True
-                st.image(up_char_a, width=150, caption="Foto Personagem A")
+                st.image(up_char_a, width=140, caption="Foto Personagem A")
         with up_col2:
             up_char_b = st.file_uploader("📸 Subir Foto do Personagem B (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_b")
             if up_char_b is not None:
                 has_ref_image = True
-                st.image(up_char_b, width=150, caption="Foto Personagem B")
+                st.image(up_char_b, width=140, caption="Foto Personagem B")
 
         if up_char_a is not None or up_char_b is not None:
             b_col1, b_col2 = st.columns([1, 1])
@@ -579,36 +940,42 @@ with tab1:
                 if st.button("🔍 EXTRAIR DNA FÍSICO E ROUPAS DAS FOTOS ENVIADAS (IA)", type="primary", use_container_width=True):
                     with st.spinner("Lendo traços faciais, cabelo e roupas exatas nas fotos..."):
                         if up_char_a is not None:
-                            dna_a, err_a = analyze_character_photo(up_char_a, api_key_input)
+                            dna_a, err_a = analyze_character_photo(up_char_a, active_api_key)
                             if err_a:
                                 st.error(f"Foto A: {err_a}")
                             else:
                                 st.session_state["dna_char_a"] = dna_a
                         if up_char_b is not None:
-                            dna_b, err_b = analyze_character_photo(up_char_b, api_key_input)
+                            dna_b, err_b = analyze_character_photo(up_char_b, active_api_key)
                             if err_b:
                                 st.error(f"Foto B: {err_b}")
                             else:
                                 st.session_state["dna_char_b"] = dna_b
                         st.success("✅ DNA físico extraído das fotos com precisão!")
             with b_col2:
-                duo_png = build_duo_reference_card(up_char_a, up_char_b)
+                duo_png = build_duo_reference_card(up_char_a, up_char_b, is_vertical=is_vertical)
                 if duo_png:
-                    st.download_button("🖼️ Baixar Cartão 16:9 dos Personagens (Subir no Flow)", data=duo_png, file_name="Referencia_Personagens_Flow_16x9.png", mime="image/png", use_container_width=True)
+                    st.download_button(
+                        f"🖼️ Baixar Cartão {orient_label} dos Personagens (Subir no Flow)",
+                        data=duo_png,
+                        file_name=f"Referencia_Personagens_Flow_{orient_label.replace(':', 'x')}.png",
+                        mime="image/png",
+                        use_container_width=True
+                    )
 
         cd1, cd2 = st.columns([1, 1])
         with cd1:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=110)
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=105)
             st.text_input("🎙️ Trava de Voz — Personagem A:", key="voice_char_a")
         with cd2:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=110)
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=105)
             st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
 
     st.divider()
     st.markdown("### 🤖 Passo 2: Gerar Roteiro com Memória de Continuidade")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Título, Tema ou Situação do Diálogo:", placeholder="Ex: Pai caipira descobrindo o namorado da filha / 5 Cidades de MG")
+        video_title = st.text_input("Título, Tema ou Situação do Vídeo:", placeholder="Ex: Pai caipira descobrindo o namorado da filha / 7 Cidades Baratas de MG")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
     with col_t3:
@@ -624,17 +991,17 @@ with tab1:
             if not video_title.strip():
                 st.warning("Digite o tema ou situação primeiro.")
             else:
-                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas..."):
+                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})..."):
                     script_out, err_msg = generate_ai_script(
-                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode,
+                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_prompt_tag,
                         st.session_state.get("dna_char_a", ""), st.session_state.get("dna_char_b", ""),
-                        st.session_state.get("dna_single_char", ""), api_key_input
+                        st.session_state.get("dna_single_char", ""), active_api_key
                     )
                     if err_msg:
                         st.error(err_msg)
                     else:
                         st.session_state["saved_script"] = script_out
-                        st.success("✅ Roteiro pronto!")
+                        st.success("✅ Roteiro gerado com sucesso!")
 
     with cs2:
         script_for_prompts = st.text_area("Roteiro Completo (Editável):", value=st.session_state["saved_script"], height=260)
@@ -649,7 +1016,7 @@ with tab1:
             lang_en_name = LANGUAGES[selected_lang]["name_en"]
             ref_tag = "Match 100% the uploaded reference character image(s) in face, hair, and exact outfit. " if has_ref_image else ""
 
-            st.success(f"✅ {len(scenes)} Prompts gerados! Copie abaixo, gere os clipes no Google Flow e depois junte tudo na Aba 2.")
+            st.success(f"✅ {len(scenes)} Prompts prontos no formato {'9:16 Vertical' if is_vertical else '16:9 Horizontal'}!")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
@@ -661,6 +1028,7 @@ with tab1:
                     dna_a_txt = st.session_state.get("dna_char_a", DEFAULT_CHAR_A)
                     dna_b_txt = st.session_state.get("dna_char_b", DEFAULT_CHAR_B)
                     p_box = (
+                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
                         f"[VISUAL & WARDROBE DNA LOCK: {visual_anchor} {ref_tag}"
                         f"Character A MUST ALWAYS be: {dna_a_txt} (NEVER change shirt color, hat, or facial hair). "
                         f"Character B MUST ALWAYS be: {dna_b_txt} (NEVER change hairstyle, face, or outfit colors). "
@@ -674,6 +1042,7 @@ with tab1:
                     single_dna = st.session_state.get("dna_single_char", "").strip()
                     char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
                     p_box = (
+                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
                         f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
                         f"CRITICAL RULE: Single continuous 8-second shot, zero cuts. All characters keep mouths closed in silence. Zero text on screen.]\n"
                         f"SCENE ACTION: {sc['visual']}.\n"
@@ -684,6 +1053,7 @@ with tab1:
                     char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
                     voice_anchor = get_strict_voice_lock(voice_choice, selected_lang, custom_voice_timbre)
                     p_box = (
+                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
                         f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
                         f"CRITICAL RULE: Single continuous 8-second camera shot, zero cuts, zero morphing. "
                         f"All people on screen MUST keep their mouths closed and silent (strictly no lip-sync). Zero text, zero signs, zero banners.]\n"
@@ -695,166 +1065,292 @@ with tab1:
                 with st.expander(f"🎬 Cena {idx:03d} ({sc['speaker']}) — \"{sc['spoken'][:60]}...\"", expanded=(idx <= 3)):
                     st.code(p_box, language="text")
 
-            st.download_button("📥 Baixar Todos os Prompts (.TXT)", data="\n".join(all_prompts_text), file_name="Prompts_Flow.txt", use_container_width=True)
+            full_txt_joined = "\n".join(all_prompts_text)
+            st.download_button("📥 Baixar Todos os Prompts (.TXT)", data=full_txt_joined, file_name="Prompts_Flow.txt", use_container_width=True)
+            with st.expander("📋 Ou copie todos os prompts de uma vez para colar na Extensão VIP"):
+                st.code(full_txt_joined, language="text")
 
 with tab2:
-    st.subheader(f"Organizador por Voz & Entrega do Vídeo Final ({selected_lang})")
-    st.info("📌 **Fluxo completo:** 1) Gere o roteiro e baixe os Prompts na **Aba 1** ➔ 2) Gere os clipes no **Google Flow** e baixe o `.ZIP` ➔ 3) Suba o `.ZIP` abaixo para receber o **Vídeo Final Pronto (.MP4)**!")
+    st.subheader(f"Montagem por Voz, Trilha Sonora & Legendas Automáticas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo:", value=st.session_state["saved_script"], height=280)
+        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para ordenar e gerar a legenda .SRT):", value=st.session_state["saved_script"], height=290)
+        burn_subs = st.checkbox(
+            "💬 Gravar legendas embutidas direto na imagem do vídeo (Recomendado para Shorts/TikTok)",
+            value=False,
+            help="Além de disponibilizar o arquivo .SRT separado para download, desenha as legendas direto no MP4 final."
+        )
+
     with col2:
         uploaded_files = st.file_uploader("📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):", type=["zip", "mp4"], accept_multiple_files=True)
-        st.markdown("#### 🎧 3. Substituir pelo Seu Próprio Áudio (Opcional)")
-        master_custom_audio = st.file_uploader("Trocar o som do vídeo pela sua própria locução/música (.mp3, .wav, .m4a):", type=["mp3", "wav", "m4a", "ogg"])
+
+        ca_mix1, ca_mix2 = st.columns([1, 1])
+        with ca_mix1:
+            master_custom_audio = st.file_uploader("🎙️ 3A. Trocar Voz Principal (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
+        with ca_mix2:
+            bg_music_file = st.file_uploader("🎵 3B. Música de Fundo Suave (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_bgm")
+
+        bgm_vol_pct = 12
+        if bg_music_file is not None:
+            bgm_vol_pct = st.slider("🔉 Volume da Música de Fundo (%):", min_value=3, max_value=40, value=12, step=1)
+
         sort_method = st.radio(
             "Como ordenar os clipes antes de juntar?",
             ["🗣️ Escutar a fala dos clipes e ordenar pelo roteiro (Automático)", "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos mudos)"]
         )
 
-    if st.button("🚀 ORGANIZAR CENAS E ENTREGAR VÍDEO FINAL PRONTO", type="primary", use_container_width=True):
+    if st.button("🚀 ORGANIZAR, MIXAR ÁUDIO E ENTREGAR VÍDEO + LEGENDA (.SRT)", type="primary", use_container_width=True):
         if not uploaded_files:
-            st.error("⚠️ Falta enviar os vídeos! Gere as cenas no Google Flow usando os prompts da Aba 1 e suba o arquivo .ZIP na caixa 2 acima.")
+            st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4 gerados no Google Flow.")
         elif "Escutar" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
             st.error("Cole o roteiro à esquerda (ou mude para ordenar pelo nome dos arquivos se os vídeos forem mudos).")
         else:
             import speech_recognition as sr
-            ffmpeg_exe = get_ffmpeg()
-            work_dir = tempfile.mkdtemp()
-            extract_dir = os.path.join(work_dir, "extraidos")
-            ordered_dir = os.path.join(work_dir, "ordenados")
-            os.makedirs(extract_dir, exist_ok=True)
-            os.makedirs(ordered_dir, exist_ok=True)
+            sem = get_render_semaphore()
+            wait_box = st.empty()
+            wait_box.info("⏳ Entrando na fila inteligente de renderização...")
 
-            mp4_files = []
-            for uf in uploaded_files:
-                if uf.name.lower().endswith(".zip"):
-                    z_path = os.path.join(work_dir, uf.name)
-                    with open(z_path, "wb") as f:
-                        f.write(uf.getbuffer())
-                    with zipfile.ZipFile(z_path, 'r') as z:
-                        for m in z.namelist():
-                            if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
-                                fn = os.path.basename(m)
-                                if fn:
-                                    t_path = os.path.join(extract_dir, fn)
-                                    with z.open(m) as src, open(t_path, 'wb') as dst:
-                                        shutil.copyfileobj(src, dst)
-                                    if os.path.getsize(t_path) > 1000:
-                                        mp4_files.append(t_path)
-                elif uf.name.lower().endswith(".mp4"):
-                    t_path = os.path.join(extract_dir, uf.name)
-                    with open(t_path, "wb") as f:
-                        f.write(uf.getbuffer())
-                    if os.path.getsize(t_path) > 1000:
-                        mp4_files.append(t_path)
+            with sem:
+                wait_box.empty()
+                ffmpeg_exe = get_ffmpeg()
+                work_dir = tempfile.mkdtemp()
+                target_w = 720 if is_vertical else 1280
+                target_h = 1280 if is_vertical else 720
+                scale_filter = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps=30"
 
-            if not mp4_files:
-                st.error("Nenhum vídeo .MP4 válido foi encontrado dentro do arquivo enviado.")
-            else:
-                results = []
-                p_bar = st.progress(0, text="Processando cenas...")
-                total = len(mp4_files)
+                try:
+                    extract_dir = os.path.join(work_dir, "extraidos")
+                    ordered_dir = os.path.join(work_dir, "ordenados")
+                    os.makedirs(extract_dir, exist_ok=True)
+                    os.makedirs(ordered_dir, exist_ok=True)
 
-                if "Escutar" in sort_method:
-                    full_spoken_norm, _ = parse_script_text(roteiro_input, selected_lang)
-                    recognizer = sr.Recognizer()
-                    temp_wav = os.path.join(work_dir, "_temp.wav")
-                    sr_code = LANGUAGES[selected_lang]["sr_code"]
-                    for idx, v_path in enumerate(mp4_files, 1):
-                        fn = os.path.basename(v_path)
-                        tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
-                        pos, sc = find_position_in_script(tr, full_spoken_norm, selected_lang)
-                        results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'position': pos})
-                        p_bar.progress((idx / total) * 0.75, text=f"Escutando cena {idx}/{total}: '{tr[:45]}...'")
-                    results.sort(key=lambda x: (x['position'], x['original_name']))
-                else:
-                    mp4_files.sort(key=lambda p: os.path.basename(p).lower())
-                    for idx, v_path in enumerate(mp4_files, 1):
-                        results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx})
-                        p_bar.progress((idx / total) * 0.75, text=f"Preparando cena {idx}/{total}...")
+                    mp4_files = []
+                    for uf in uploaded_files:
+                        if uf.name.lower().endswith(".zip"):
+                            z_path = os.path.join(work_dir, uf.name)
+                            with open(z_path, "wb") as f:
+                                f.write(uf.getbuffer())
+                            with zipfile.ZipFile(z_path, 'r') as z:
+                                for m in z.namelist():
+                                    if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
+                                        fn = os.path.basename(m)
+                                        if fn:
+                                            t_path = os.path.join(extract_dir, fn)
+                                            with z.open(m) as src, open(t_path, 'wb') as dst:
+                                                shutil.copyfileobj(src, dst)
+                                            if os.path.getsize(t_path) > 1000:
+                                                mp4_files.append(t_path)
+                        elif uf.name.lower().endswith(".mp4"):
+                            t_path = os.path.join(extract_dir, uf.name)
+                            with open(t_path, "wb") as f:
+                                f.write(uf.getbuffer())
+                            if os.path.getsize(t_path) > 1000:
+                                mp4_files.append(t_path)
 
-                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
-                with open(c_list, 'w', encoding='utf-8') as cf:
-                    for s_num, item in enumerate(results, 1):
-                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
-                        shutil.copy2(item['path'], n_path)
-                        safe_p = n_path.replace("\\", "/")
-                        cf.write(f"file '{safe_p}'\n")
+                    if not mp4_files:
+                        st.error("Nenhum vídeo .MP4 válido foi encontrado.")
+                    else:
+                        results = []
+                        p_bar = st.progress(0, text="Analisando cenas...")
+                        total = len(mp4_files)
 
-                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
-                p_bar.progress(0.85, text="Unindo todas as cenas em um único vídeo...")
+                        if "Escutar" in sort_method:
+                            full_spoken_norm, _ = parse_script_text(roteiro_input, selected_lang)
+                            recognizer = sr.Recognizer()
+                            temp_wav = os.path.join(work_dir, "_temp.wav")
+                            sr_code = LANGUAGES[selected_lang]["sr_code"]
+                            for idx, v_path in enumerate(mp4_files, 1):
+                                fn = os.path.basename(v_path)
+                                tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
+                                pos, sc = find_position_in_script(tr, full_spoken_norm, selected_lang)
+                                dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
+                                results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'position': pos, 'duration': dur_c})
+                                p_bar.progress((idx / total) * 0.65, text=f"Escutando cena {idx}/{total}: '{tr[:40]}...'")
+                            results.sort(key=lambda x: (x['position'], x['original_name']))
+                        else:
+                            mp4_files.sort(key=lambda p: os.path.basename(p).lower())
+                            for idx, v_path in enumerate(mp4_files, 1):
+                                dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
+                                results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx, 'duration': dur_c})
+                                p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
 
-                res = subprocess.run(
-                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
-                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                )
+                        srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
+                        srt_file_path = os.path.join(work_dir, "legendas.srt")
+                        with open(srt_file_path, "w", encoding="utf-8") as sf:
+                            sf.write(srt_content)
 
-                if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
-                    p_bar.progress(0.90, text="Padronizando formato dos clipes para união segura...")
-                    norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
-                    with open(norm_list, 'w', encoding='utf-8') as nf:
-                        for s_num, item in enumerate(results, 1):
-                            norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
-                            has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-                            if "Audio:" in has_aud:
-                                subprocess.run([
-                                    ffmpeg_exe, '-y', '-i', item['path'],
-                                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30',
-                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
-                                    '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
-                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                        c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
+                        with open(c_list, 'w', encoding='utf-8') as cf:
+                            for s_num, item in enumerate(results, 1):
+                                n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
+                                shutil.copy2(item['path'], n_path)
+                                cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
+
+                        joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
+                        p_bar.progress(0.75, text="Unindo todas as cenas...")
+
+                        res = subprocess.run(
+                            [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
+                            stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                        )
+
+                        if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
+                            p_bar.progress(0.80, text="Padronizando formato dos clipes...")
+                            norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
+                            with open(norm_list, 'w', encoding='utf-8') as nf:
+                                for s_num, item in enumerate(results, 1):
+                                    norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
+                                    has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+                                    if "Audio:" in has_aud:
+                                        subprocess.run([
+                                            ffmpeg_exe, '-y', '-i', item['path'],
+                                            '-vf', scale_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                            '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
+                                        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    else:
+                                        subprocess.run([
+                                            ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+                                            '-i', item['path'], '-vf', scale_filter,
+                                            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                            '-c:a', 'aac', '-shortest', norm_clip
+                                        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
+                                        nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
+                            subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                        out_mp4 = joined_mp4
+
+                        if master_custom_audio is not None and os.path.exists(out_mp4):
+                            p_bar.progress(0.86, text="Aplicando sua locução principal...")
+                            custom_aud_path = os.path.join(work_dir, "locucao_master" + os.path.splitext(master_custom_audio.name)[1])
+                            with open(custom_aud_path, "wb") as fa:
+                                fa.write(master_custom_audio.getbuffer())
+                            dubbed_mp4 = os.path.join(work_dir, "VIDEO_VOZ_CUSTOM.mp4")
+                            res_mux = subprocess.run([
+                                ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path,
+                                '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
+                                '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', dubbed_mp4
+                            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
+                                out_mp4 = dubbed_mp4
+
+                        if bg_music_file is not None and os.path.exists(out_mp4):
+                            p_bar.progress(0.92, text="Mixando trilha sonora de fundo...")
+                            bgm_path = os.path.join(work_dir, "bgm_track" + os.path.splitext(bg_music_file.name)[1])
+                            with open(bgm_path, "wb") as fb:
+                                fb.write(bg_music_file.getbuffer())
+                            bgm_out_mp4 = os.path.join(work_dir, "VIDEO_COM_BGM.mp4")
+                            vol_float = round(bgm_vol_pct / 100.0, 3)
+                            has_main_aud = "Audio:" in subprocess.run([ffmpeg_exe, '-i', out_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+                            if has_main_aud:
+                                cmd_bgm = [
+                                    ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
+                                    '-filter_complex', f"[1:a]volume={vol_float}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+                                    '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', bgm_out_mp4
+                                ]
                             else:
-                                subprocess.run([
-                                    ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-                                    '-i', item['path'],
-                                    '-vf', 'scale=1280:720:force_original_aspect_ratio=decrease,pad=1280:720:(ow-iw)/2:(oh-ih)/2,fps=30',
-                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
-                                    '-c:a', 'aac', '-shortest', norm_clip
-                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
-                                nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
-                    subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                cmd_bgm = [
+                                    ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
+                                    '-filter_complex', f"[1:a]volume={vol_float}[aout]",
+                                    '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', bgm_out_mp4
+                                ]
+                            res_bgm = subprocess.run(cmd_bgm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if res_bgm.returncode == 0 and os.path.exists(bgm_out_mp4) and os.path.getsize(bgm_out_mp4) > 5000:
+                                out_mp4 = bgm_out_mp4
 
-                out_mp4 = joined_mp4
-                if master_custom_audio is not None and os.path.exists(joined_mp4):
-                    p_bar.progress(0.95, text="Aplicando o seu próprio áudio no vídeo final...")
-                    custom_aud_path = os.path.join(work_dir, master_custom_audio.name)
-                    with open(custom_aud_path, "wb") as fa:
-                        fa.write(master_custom_audio.getbuffer())
-                    dubbed_mp4 = os.path.join(work_dir, "VIDEO_FINAL_COM_MEU_AUDIO.mp4")
-                    cmd_mux = [
-                        ffmpeg_exe, '-y', '-i', joined_mp4, '-i', custom_aud_path,
-                        '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-                        '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', dubbed_mp4
-                    ]
-                    res_mux = subprocess.run(cmd_mux, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                    if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
-                        out_mp4 = dubbed_mp4
+                        if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
+                            p_bar.progress(0.96, text="Gravando legendas dinâmicas no vídeo...")
+                            subbed_mp4 = os.path.join(work_dir, "VIDEO_LEGENDADO.mp4")
+                            srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
+                            f_size = 15 if is_vertical else 18
+                            margin_v = 55 if is_vertical else 28
+                            sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
+                            res_sub = subprocess.run([
+                                ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter,
+                                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '23', '-threads', '2',
+                                '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
+                            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                            if res_sub.returncode == 0 and os.path.exists(subbed_mp4) and os.path.getsize(subbed_mp4) > 5000:
+                                out_mp4 = subbed_mp4
+                            else:
+                                st.warning("⚠️ Seu vídeo foi gerado com sucesso, mas a fonte de legenda embutida não pôde ser aplicada neste servidor — baixe o arquivo .SRT abaixo!")
 
-                p_bar.progress(1.0, text="Concluído!")
-                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
-                    st.session_state["final_video_path"] = out_mp4
-                    st.session_state["final_report"] = results
-                else:
-                    st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique se os arquivos enviados não estão corrompidos.")
+                        p_bar.progress(1.0, text="Concluído!")
+                        if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
+                            with open(out_mp4, "rb") as f_final:
+                                st.session_state["final_video_bytes"] = f_final.read()
+                            st.session_state["final_srt_text"] = srt_content
+                            st.session_state["final_report"] = [
+                                {"original_name": r["original_name"], "transcript": r["transcript"]} for r in results
+                            ]
+                        else:
+                            st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique os vídeos enviados.")
+                finally:
+                    shutil.rmtree(work_dir, ignore_errors=True)
 
-    if "final_video_path" in st.session_state and os.path.exists(st.session_state["final_video_path"]):
-        final_p = st.session_state["final_video_path"]
-        size_mb = os.path.getsize(final_p) / (1024 * 1024)
+    if "final_video_bytes" in st.session_state and st.session_state["final_video_bytes"]:
+        v_data = st.session_state["final_video_bytes"]
+        size_mb = len(v_data) / (1024 * 1024)
         st.success(f"✅ VÍDEO FINAL PRONTO! ({len(st.session_state.get('final_report', []))} cenas unidas — {size_mb:.1f} MB)")
-        with open(final_p, "rb") as vf_dl:
+
+        dl_c1, dl_c2 = st.columns([2, 1])
+        with dl_c1:
             st.download_button(
                 "💾 BAIXAR VÍDEO COMPLETO PRONTO (.MP4)",
-                data=vf_dl,
+                data=v_data,
                 file_name="VIDEO_FINAL_PRONTO.mp4",
                 mime="video/mp4",
                 type="primary",
                 use_container_width=True
             )
-        st.video(final_p)
+        with dl_c2:
+            if st.session_state.get("final_srt_text"):
+                st.download_button(
+                    "📝 BAIXAR LEGENDA SINCRONIZADA (.SRT)",
+                    data=st.session_state["final_srt_text"],
+                    file_name="Legenda_Sincronizada.srt",
+                    mime="text/plain",
+                    use_container_width=True
+                )
+
+        st.video(v_data)
         with st.expander("📋 Relatório da Ordem das Cenas"):
             for i, r in enumerate(st.session_state.get("final_report", []), 1):
                 st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *{r['transcript']}*")
-# FIM DO ARQUIVO APP.PY
+
+with tab3:
+    st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
+    st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts usando o mesmo DNA dos seus personagens.")
+
+    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: 7 Cidades de Minas Gerais onde Aposentados Vivem como Reis")
+    seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
+
+    if st.button("✨ GERAR TÍTULOS VIRAIS, DESCRIÇÃO COM CAPÍTULOS, TAGS E PROMPT DE CAPA", type="primary", use_container_width=True):
+        if not seo_topic.strip() and not seo_script_ref.strip():
+            st.warning("Gere um roteiro na Aba 1 ou digite o tema acima primeiro.")
+        else:
+            with st.spinner("Criando estratégia de alto CTR, SEO e prompt da capa..."):
+                combined_dna = (
+                    f"Char A: {st.session_state.get('dna_char_a', '')} | Char B: {st.session_state.get('dna_char_b', '')}"
+                    if "Modo 2" in audio_mode else st.session_state.get("dna_single_char", "Cinematic documentary visual")
+                )
+                kit_txt, err_seo = generate_seo_and_thumbnail_kit(
+                    seo_topic, seo_script_ref, selected_lang, aspect_ratio, style_choice, combined_dna, active_api_key
+                )
+                if err_seo:
+                    st.error(err_seo)
+                else:
+                    st.session_state["seo_kit_output"] = kit_txt
+                    st.success("✅ Kit de publicação gerado com sucesso!")
+
+    if st.session_state.get("seo_kit_output"):
+        st.markdown("---")
+        st.markdown(st.session_state["seo_kit_output"])
+        st.download_button(
+            "📥 Baixar Kit Completo de Publicação (.TXT)",
+            data=st.session_state["seo_kit_output"],
+            file_name="Kit_Publicacao_SEO_Thumbnail.txt",
+            use_container_width=True
+        )
+# FIM DO ARQUIVO SAAS ULTIMATE COMPLETO APP.PY
