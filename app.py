@@ -122,7 +122,7 @@ LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
         "sr_code": "pt-BR",
         "name_en": "Brazilian Portuguese (pt-BR)",
-        "end_keywords": ["grande abraco", "visitaria primeiro", "proximo video", "proximo dossie", "comente aqui", "ate a proxima", "qual dessas", "inscreva se"]
+        "end_keywords": ["grande abraco", "visitaria primeiro", "proximo video", "proximo dossie", "comente aqui", "ate a proxima", "qual dessas", "inscreva se", "ate o proximo video"]
     },
     "🇪🇸 Espanhol (Latino/Neutro)": {
         "sr_code": "es-MX",
@@ -301,6 +301,21 @@ def fix_pronunciation(text, lang_label):
         t = re.sub(r'\bEUA\b', 'Estados Unidos', t)
         t = re.sub(r'\bONU\b', 'Organização das Nações Unidas', t)
         t = re.sub(r'\bIBGE\b', 'I B G E', t)
+        t = re.sub(r'\bUFJF\b', 'U F J F', t)
+        t = re.sub(r'\bUFU\b', 'U F U', t)
+        t = re.sub(r'\bUFMG\b', 'U F M G', t)
+        t = re.sub(r'\bUFV\b', 'U F V', t)
+        t = re.sub(r'\bUFSJ\b', 'U F S J', t)
+        t = re.sub(r'\bUNIFEI\b', 'Unifei', t)
+        t = re.sub(r'\bIDH\b', 'I D H', t)
+        t = re.sub(r'\bPIB\b', 'P I B', t)
+        t = re.sub(r'\bBH\b', 'Belo Horizonte', t)
+        t = re.sub(r'\bJF\b', 'Juiz de Fora', t)
+        t = re.sub(r'\bMG\b', 'Minas Gerais', t)
+        t = re.sub(r'\bSP\b', 'São Paulo', t)
+        t = re.sub(r'\bRJ\b', 'Rio de Janeiro', t)
+        t = re.sub(r'\bBR[-\s]*040\b', 'B R zero quarenta', t, flags=re.IGNORECASE)
+        t = re.sub(r'\bBR[-\s]*(\d+)\b', r'B R \1', t, flags=re.IGNORECASE)
         t = re.sub(r'R\$\s*(\d+)', r'\1 reais', t)
         t = re.sub(r'US\$\s*(\d+)', r'\1 dólares', t)
         t = re.sub(r'(\d+)\s*kg\b', r'\1 quilos', t, flags=re.IGNORECASE)
@@ -390,9 +405,9 @@ def call_llm_text(system_msg, user_prompt, api_key, temperature=0.35):
                             {"role": "user", "content": user_prompt}
                         ],
                         "temperature": temperature,
-                        "max_tokens": 7000
+                        "max_tokens": 7500
                     },
-                    timeout=90
+                    timeout=95
                 )
                 if r_groq.status_code == 200:
                     out = clean_markdown(r_groq.json()["choices"][0]["message"]["content"])
@@ -411,7 +426,7 @@ def call_llm_text(system_msg, user_prompt, api_key, temperature=0.35):
                 g_url,
                 headers={"Content-Type": "application/json"},
                 json={"contents": [{"parts": [{"text": f"{system_msg}\n\n{user_prompt}"}]}], "generationConfig": {"temperature": temperature}},
-                timeout=90
+                timeout=95
             )
             if r_gem.status_code == 200:
                 out = clean_markdown(r_gem.json()["candidates"][0]["content"]["parts"][0]["text"])
@@ -638,35 +653,132 @@ def generate_seo_and_thumbnail_kit(title, script_text, lang_label, aspect_label,
     sys_msg = "You are a YouTube & TikTok viral growth strategist. Deliver ready-to-copy metadata."
     return call_llm_text(sys_msg, seo_prompt, api_key, temperature=0.5)
 
+# ================= AUTO-FATIADOR DE ROTEIROS LONGOS EM CENAS DE 8s =================
+def split_spoken_into_8s_chunks(spoken_text, max_words=19):
+    words_total = spoken_text.split()
+    if len(words_total) <= max_words + 2:
+        return [spoken_text.strip()]
+
+    sentences = re.split(r'(?<=[.!?])\s+', spoken_text.strip())
+    raw_chunks = []
+
+    for sent in sentences:
+        sent = sent.strip()
+        if not sent:
+            continue
+        if len(sent.split()) <= max_words:
+            raw_chunks.append(sent)
+        else:
+            clauses = re.split(r'(?<=[;:—,])\s+|\s+(?=—)', sent)
+            curr = ""
+            for cl in clauses:
+                cl = cl.strip()
+                if not cl:
+                    continue
+                cand = f"{curr} {cl}".strip() if curr else cl
+                if len(cand.split()) <= max_words:
+                    curr = cand
+                else:
+                    if curr:
+                        raw_chunks.append(curr)
+                    if len(cl.split()) <= max_words + 2:
+                        curr = cl
+                    else:
+                        c_words = cl.split()
+                        step = max(12, min(max_words, math.ceil(len(c_words) / math.ceil(len(c_words) / max_words))))
+                        for i in range(0, len(c_words), step):
+                            part = " ".join(c_words[i:i + step])
+                            if i + step < len(c_words):
+                                raw_chunks.append(part)
+                            else:
+                                curr = part
+            if curr:
+                raw_chunks.append(curr)
+
+    merged = []
+    for ch in raw_chunks:
+        if merged and (len(ch.split()) < 7 or len(merged[-1].split()) < 8) and (len(merged[-1].split()) + len(ch.split()) <= 22):
+            merged[-1] = f"{merged[-1]} {ch}".strip()
+        else:
+            merged.append(ch)
+    return merged
+
+def clean_visual_for_flow(vis_text):
+    if not vis_text:
+        return "Cinematic documentary B-roll matching the narration, natural daylight, zero on-screen text"
+    v = re.sub(
+        r'(?:texto|placar)[^,\]]*?(?:na tela|piscando|animado)\s*:?\s*["“”]?.*?["“”]?(?:$|\+|/)',
+        '',
+        vis_text,
+        flags=re.IGNORECASE
+    ).strip(" /+-:,")
+    if len(v) < 10:
+        return "Sweeping aerial drone view of iconic urban skyline and green hills in golden sunlight, zero text"
+    return v
+
 def extract_scenes_for_prompts(raw_script, lang_label):
-    blocks = re.split(r'\n\s*\n', raw_script.strip())
+    # Desgruda marcações [CENA: ...]LOCUÇÃO: que estejam coladas na mesma linha
+    pre = re.sub(r'(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', raw_script.strip(), flags=re.IGNORECASE)
+    pre = re.sub(
+        r'((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)',
+        r'\n\1',
+        pre,
+        flags=re.IGNORECASE
+    )
+
+    blocks = re.split(r'\n\s*\n', pre.strip())
+    camera_angles = [
+        "Wide cinematic aerial drone establishing shot",
+        "Smooth street-level gimbal tracking shot",
+        "Medium cinematic architectural and urban lifestyle view",
+        "High-altitude sweeping panoramic drone movement",
+        "Dynamic cinematic push-in shot with natural depth of field"
+    ]
+
     scenes = []
     for block in blocks:
         lines = [l.strip() for l in block.splitlines() if l.strip()]
-        visual, spoken, speaker_tag = "", "", "NARRATOR"
+        visual, spoken_parts, speaker_tag = "", [], "NARRATOR"
+
         for line in lines:
-            m_cena = re.search(r'\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
+            if re.match(r'^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?', line):
+                continue
+            if re.match(r'^(?:ROUND\s*\d+|ABERTURA|VEREDITO\s+FINAL|ENCERRAMENTO|INTRODU[ÇC][ÃA]O)\b', line, re.IGNORECASE) and ":" not in line:
+                continue
+
+            m_cena = re.search(r'^\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$', line, re.IGNORECASE)
             m_pa = re.search(r'^PERSONAGEM\s*(?:A|1)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
             m_pb = re.search(r'^PERSONAGEM\s*(?:B|2)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
             m_loc = re.search(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
+
             if m_cena:
-                visual = m_cena.group(1).strip()
+                visual = clean_visual_for_flow(m_cena.group(1).strip())
             elif m_pa:
                 speaker_tag = "A"
-                spoken = fix_pronunciation(m_pa.group(1).strip(), lang_label)
+                spoken_parts.append(fix_pronunciation(m_pa.group(1).strip(), lang_label))
             elif m_pb:
                 speaker_tag = "B"
-                spoken = fix_pronunciation(m_pb.group(1).strip(), lang_label)
+                spoken_parts.append(fix_pronunciation(m_pb.group(1).strip(), lang_label))
             elif m_loc:
                 speaker_tag = "NARRATOR"
-                spoken = fix_pronunciation(m_loc.group(1).strip(), lang_label)
-            elif not re.match(r'^\[\d+:\d+', line) and not spoken:
-                spoken = fix_pronunciation(line, lang_label)
-        if spoken or visual:
-            if not visual:
-                visual = "Single continuous wide cinematic shot matching the context, zero text on screen"
-            scenes.append({"visual": visual, "spoken": spoken, "speaker": speaker_tag})
+                spoken_parts.append(fix_pronunciation(m_loc.group(1).strip(), lang_label))
+            else:
+                spoken_parts.append(fix_pronunciation(line, lang_label))
+
+        full_spoken = " ".join(p for p in spoken_parts if p).strip()
+        if not full_spoken and not visual:
+            continue
+
+        base_vis = visual if visual else "Cinematic 4K documentary B-roll matching the narration, zero text on screen"
+        chunks = split_spoken_into_8s_chunks(full_spoken, max_words=19) if full_spoken else [""]
+
+        for c_idx, ch_txt in enumerate(chunks):
+            cam_prefix = camera_angles[c_idx % len(camera_angles)]
+            varied_vis = f"{cam_prefix} — {base_vis}" if len(chunks) > 1 else base_vis
+            scenes.append({"visual": varied_vis, "spoken": ch_txt, "speaker": speaker_tag})
+
     return scenes
+# ===================================================================================
 
 def format_srt_timestamp(seconds_float):
     ms = int(round((seconds_float - int(seconds_float)) * 1000))
@@ -721,19 +833,9 @@ def normalize_text(text):
     return re.sub(r'\s+', ' ', text).strip()
 
 def parse_script_text(raw, lang_label):
-    spoken_lines = []
-    for line in raw.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-        m = re.search(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
-        if m:
-            spoken_lines.append(fix_pronunciation(m.group(1).strip(), lang_label))
-        elif not re.match(r'^\[\d+:\d+', line) and not re.match(r'^\[(?:CENA|SCENE):', line, re.IGNORECASE):
-            cleaned = re.sub(r'\[(?:CENA|SCENE):.*?\]', '', line, flags=re.IGNORECASE).strip()
-            if cleaned:
-                spoken_lines.append(fix_pronunciation(cleaned, lang_label))
-    full_spoken = ' '.join(spoken_lines) if spoken_lines else raw
+    scenes = extract_scenes_for_prompts(raw, lang_label)
+    spoken_lines = [sc["spoken"] for sc in scenes if sc.get("spoken")]
+    full_spoken = " ".join(spoken_lines) if spoken_lines else raw
     return normalize_text(full_spoken), normalize_text(raw)
 
 def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpeg_exe):
@@ -801,7 +903,7 @@ with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo e
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)** com seu Google, clique em *Create API Key*, copie o código `gsk_...` e cole no campo ao lado.\n"
-        "2. **Crie o Roteiro e os Prompts (Aba 1):** Escolha **16:9 (YouTube)** ou **9:16 (TikTok/Shorts/Reels)**, suba fotos dos personagens se desejar e gere os prompts blindados.\n"
+        "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** Escolha **16:9 (YouTube)** ou **9:16 (TikTok/Shorts/Reels)**. Se você colar um roteiro grande de 10-12 minutos, o sistema **fatia sozinho em ~90 cenas de 8 segundos**!\n"
         "3. **Dispare no Automático para o Google Flow:** Baixe a **Extensão Chrome VIP** abaixo, clique em **Abrir Google Flow em Janela Lateral**, cole seus prompts no painel azul e deixe ela enviar todas as cenas sozinha!\n"
         "4. **Receba Tudo Pronto (Abas 2 e 3):** Suba o `.ZIP` na **Aba 2** para juntar por voz, adicionar música de fundo e baixar o `.MP4` + legenda `.SRT`. Na **Aba 3**, gere títulos virais, descrição com capítulos e prompt da capa!"
     )
@@ -846,7 +948,6 @@ tab1, tab2, tab3 = st.tabs([
 ])
 
 with tab1:
-    # ======= BARRA CONECTORA GOOGLE FLOW + EXTENSÃO VIP AUTOMÁTICA =======
     cf_btn1, cf_btn2 = st.columns([1, 1])
     with cf_btn1:
         components.html(
@@ -864,7 +965,6 @@ with tab1:
             mime="application/zip",
             use_container_width=True
         )
-    # =====================================================================
 
     st.markdown("### 🎛️ Passo 1: Modo de Áudio e Upload dos Personagens")
     audio_mode = st.radio(
@@ -972,10 +1072,10 @@ with tab1:
             st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
 
     st.divider()
-    st.markdown("### 🤖 Passo 2: Gerar Roteiro com Memória de Continuidade")
+    st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA ou Colar Roteiro Longo")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Título, Tema ou Situação do Vídeo:", placeholder="Ex: Pai caipira descobrindo o namorado da filha / 7 Cidades Baratas de MG")
+        video_title = st.text_input("Título, Tema ou Situação do Vídeo:", placeholder="Ex: Juiz de Fora vs Uberlândia / 7 Cidades Baratas de MG")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
     with col_t3:
@@ -1004,9 +1104,13 @@ with tab1:
                         st.success("✅ Roteiro gerado com sucesso!")
 
     with cs2:
-        script_for_prompts = st.text_area("Roteiro Completo (Editável):", value=st.session_state["saved_script"], height=260)
+        script_for_prompts = st.text_area(
+            "Roteiro Completo (Editável — se colar parágrafos grandes, o botão abaixo fatia sozinho de 8 em 8s!):",
+            value=st.session_state["saved_script"],
+            height=260
+        )
 
-    if st.button("✨ GERAR TODOS OS PROMPTS BLINDADOS PARA O GOOGLE FLOW", type="primary", use_container_width=True):
+    if st.button("✨ FATIAR EM CENAS DE 8s & GERAR TODOS OS PROMPTS BLINDADOS", type="primary", use_container_width=True):
         if not script_for_prompts.strip():
             st.warning("Gere ou cole um roteiro primeiro.")
         else:
@@ -1016,7 +1120,8 @@ with tab1:
             lang_en_name = LANGUAGES[selected_lang]["name_en"]
             ref_tag = "Match 100% the uploaded reference character image(s) in face, hair, and exact outfit. " if has_ref_image else ""
 
-            st.success(f"✅ {len(scenes)} Prompts prontos no formato {'9:16 Vertical' if is_vertical else '16:9 Horizontal'}!")
+            est_mins = round((len(scenes) * 8) / 60.0, 1)
+            st.success(f"✅ {len(scenes)} Cenas de 8s prontas (~{est_mins} min totais) no formato {'9:16 Vertical' if is_vertical else '16:9 Horizontal'}!")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
@@ -1062,7 +1167,7 @@ with tab1:
                     )
 
                 all_prompts_text.append(f"=== CENA {idx:03d} ===\n{p_box}\n")
-                with st.expander(f"🎬 Cena {idx:03d} ({sc['speaker']}) — \"{sc['spoken'][:60]}...\"", expanded=(idx <= 3)):
+                with st.expander(f"🎬 Cena {idx:03d} ({len(sc['spoken'].split())} palavras) — \"{sc['spoken'][:65]}...\"", expanded=(idx <= 3)):
                     st.code(p_box, language="text")
 
             full_txt_joined = "\n".join(all_prompts_text)
@@ -1323,7 +1428,7 @@ with tab3:
     st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
     st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts usando o mesmo DNA dos seus personagens.")
 
-    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: 7 Cidades de Minas Gerais onde Aposentados Vivem como Reis")
+    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: Juiz de Fora vs Uberlândia: Qual a Verdadeira Capital do Interior?")
     seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
 
     if st.button("✨ GERAR TÍTULOS VIRAIS, DESCRIÇÃO COM CAPÍTULOS, TAGS E PROMPT DE CAPA", type="primary", use_container_width=True):
@@ -1353,4 +1458,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE COMPLETO APP.PY
+# FIM DO ARQUIVO SAAS ULTIMATE COM AUTO-FATIADOR
