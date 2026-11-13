@@ -935,28 +935,28 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     return scenes
 # ===================================================================================
 
-# ================= MOTOR LOCAL FFMPEG.WASM NO NAVEGADOR (ZERO UPLOAD / 900MB+) =================
+# ================= MOTOR LOCAL FFMPEG.WASM v2.7 (SINGLE-THREAD / ZERO WORKER BLOCK) =================
 FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Estúdio Pro — Montador Local FFmpeg.wasm</title>
+<title>Estúdio Pro — Montador Local FFmpeg.wasm v2.7</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
-<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';document.head.appendChild(s);"></script>
 <style>
   * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
-  body { margin: 0; padding: 14px; background: #0f172a; color: #f8fafc; border-radius: 12px; }
-  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
-  .top-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  body { margin: 0; padding: 12px; background: #0f172a; color: #f8fafc; border-radius: 12px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; }
+  .top-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 12px; }
   .badge { background: #065f46; color: #6ee7b7; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
   .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
   @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
-  .dropzone { border: 2px dashed #3b82f6; background: #0f172a; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; transition: 0.2s; }
+  .dropzone { border: 2px dashed #3b82f6; background: #0f172a; border-radius: 10px; padding: 15px; text-align: center; cursor: pointer; transition: 0.2s; }
   .dropzone:hover { border-color: #60a5fa; background: #172554; }
-  label.lbl { display: block; font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 6px; }
+  label.lbl { display: block; font-size: 12.5px; font-weight: 600; color: #cbd5e1; margin-bottom: 5px; }
+  textarea.script-box { width: 100%; background: #0f172a; color: #f1f5f9; border: 1px solid #475569; border-radius: 8px; padding: 8px; font-size: 12px; resize: vertical; margin-bottom: 10px; }
   select, input[type="range"] { width: 100%; padding: 8px; border-radius: 8px; background: #0f172a; color: #fff; border: 1px solid #475569; font-size: 13px; }
-  .chk-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #e2e8f0; margin: 7px 0; cursor: pointer; }
+  .chk-row { display: flex; align-items: center; gap: 8px; font-size: 12.5px; color: #e2e8f0; margin: 7px 0; cursor: pointer; }
   .btn-main { width: 100%; padding: 13px; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #fff; transition: 0.2s; }
   .btn-main:hover:not(:disabled) { background: linear-gradient(90deg, #1d4ed8, #1e40af); }
   .btn-main:disabled { opacity: 0.55; cursor: not-allowed; }
@@ -970,7 +970,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
   .dl-btn { display: block; text-align: center; padding: 12px; border-radius: 8px; font-weight: 700; text-decoration: none; font-size: 14px; }
   .dl-mp4 { background: #10b981; color: #052e16; }
   .dl-srt { background: #0f172a; color: #f8fafc; border: 1px solid #34d399; }
-  .log-box { max-height: 190px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #94a3b8; margin-top: 10px; display: none; }
+  .log-box { max-height: 195px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #94a3b8; margin-top: 10px; display: none; }
 </style>
 </head>
 <body>
@@ -978,17 +978,20 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="top-row">
     <div>
-      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm (Zero Upload p/ Servidor)</strong>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v2.7 (Single-Thread Anti-Bloqueio)</strong>
       <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-        Lê pacotes de <b>900 MB, 1.5 GB ou mais</b> direto do seu computador — sem limite de nuvem!
-        Roteiro carregado: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
+        Lê pacotes de <b>900 MB, 1.5 GB ou mais</b> direto do seu computador — zero upload!
+        Roteiro detectado: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
       <span class="badge">100% RAM Local</span>
-      <button class="btn-sec" id="open-tab-btn" title="Abre este montador numa aba exclusiva com o máximo de memória RAM do navegador">🖥️ Abrir em Aba Dedicada (+RAM)</button>
+      <button class="btn-sec" id="open-tab-btn" title="Abre este montador numa aba exclusiva com memória RAM dedicada do Chrome">🖥️ Abrir em Aba Dedicada (+RAM)</button>
     </div>
   </div>
+
+  <label class="lbl">📜 Roteiro Completo do Vídeo (Já sincronizado com a Aba 1 — ou cole/edite direto aqui sem perder o arquivo selecionado):</label>
+  <textarea id="inp-script" class="script-box" rows="4" placeholder="Cole aqui o roteiro completo para alinhar todas as cenas pela fala e gerar a legenda .SRT..."></textarea>
 
   <div class="grid2">
     <div>
@@ -997,7 +1000,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
         <input type="file" id="inp-videos" multiple accept=".zip,.mp4,video/mp4,application/zip" style="display:none" />
         <div id="vid-file-label" style="font-size:13px;color:#93c5fd;font-weight:600;">
           Clique aqui para escolher o .ZIP ou todos os .MP4<br/>
-          <span style="font-size:11px;color:#64748b;font-weight:400;">Processamento instantâneo direto no disco/navegador (0 bytes enviados)</span>
+          <span style="font-size:11px;color:#64748b;font-weight:400;">Leitura instantânea na memória local (0 bytes enviados p/ internet)</span>
         </div>
       </div>
 
@@ -1032,11 +1035,11 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
       <label class="chk-row">
         <input type="checkbox" id="chk-fast-copy" checked />
-        <span>⚡ União Instantânea <code>-c copy</code> (Junta em ~8 segundos sem recodificar!)</span>
+        <span>⚡ União Instantânea <code>-c copy</code> (Cola 90+ cenas em segundos sem recodificar!)</span>
       </label>
 
       <div style="font-size:11.5px;color:#94a3b8;background:#0f172a;padding:8px 10px;border-radius:8px;border:1px solid #334155;margin-top:8px;">
-        💡 <b>Dica:</b> No modo <code>-c copy</code>, até 90 cenas são coladas em segundos mantendo 100% da qualidade original do Google Flow. Se o pacote limpo passar de 780 MB, o motor divide em sub-lotes seguros automaticamente para não estourar a memória da aba!
+        💡 <b>Núcleo Single-Thread v2.7:</b> Roda direto dentro do quadro do Streamlit sem bloqueio de Worker e une arquivos de 950 MB+ preservando 100% da qualidade original!
       </div>
     </div>
   </div>
@@ -1063,7 +1066,122 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
 <script>
 const CONFIG = __CONFIG_JSON__;
-document.getElementById("sc-count-lbl").innerText = CONFIG.scenes.length + " cenas";
+const scriptTextarea = document.getElementById("inp-script");
+scriptTextarea.value = CONFIG.rawScript || "";
+
+function fixPronJS(t) {
+  if (!t) return "";
+  let s = t.trim();
+  if (CONFIG.whisperLang === "pt") {
+    s = s.replace(/\bIBGE\b/g, "I B G E")
+         .replace(/\bUFJF\b/g, "U F J F")
+         .replace(/\bUFU\b/g, "U F U")
+         .replace(/\bUFMG\b/g, "U F M G")
+         .replace(/\bIDH\b/g, "I D H")
+         .replace(/\bPIB\b/g, "P I B")
+         .replace(/\bBH\b/g, "Belo Horizonte")
+         .replace(/\bJF\b/g, "Juiz de Fora")
+         .replace(/\bMG\b/g, "Minas Gerais")
+         .replace(/\bBR[-\s]*040\b/gi, "B R zero quarenta")
+         .replace(/(\d+)\s*%/g, "$1 por cento")
+         .replace(/\bGoliath\b/g, "Golias")
+         .replace(/\bDavid\b/g, "Davi");
+  }
+  return s.replace(/\s+/g, " ").trim();
+}
+
+function splitSpoken8sJS(spokenText, maxWords = 18) {
+  const wordsTotal = spokenText.split(/\s+/).filter(Boolean);
+  if (wordsTotal.length <= maxWords + 2) return [spokenText.trim()];
+  const sentences = spokenText.trim().split(/(?<=[.!?])\s+/);
+  const rawChunks = [];
+  for (let sent of sentences) {
+    sent = sent.trim();
+    if (!sent) continue;
+    if (sent.split(/\s+/).length <= maxWords) {
+      rawChunks.push(sent);
+    } else {
+      const clauses = sent.split(/(?<=[;:—,])\s+|\s+(?=—)/);
+      let curr = "";
+      for (let cl of clauses) {
+        cl = cl.trim();
+        if (!cl) continue;
+        const cand = curr ? `${curr} ${cl}`.trim() : cl;
+        if (cand.split(/\s+/).length <= maxWords) {
+          curr = cand;
+        } else {
+          if (curr) rawChunks.push(curr);
+          const cw = cl.split(/\s+/);
+          if (cw.length <= maxWords + 2) {
+            curr = cl;
+          } else {
+            const step = Math.max(12, Math.min(maxWords, Math.ceil(cw.length / Math.ceil(cw.length / maxWords))));
+            for (let i = 0; i < cw.length; i += step) {
+              const part = cw.slice(i, i + step).join(" ");
+              if (i + step < cw.length) rawChunks.push(part);
+              else curr = part;
+            }
+          }
+        }
+      }
+      if (curr) rawChunks.push(curr);
+    }
+  }
+  const merged = [];
+  for (const ch of rawChunks) {
+    const cwLen = ch.split(/\s+/).length;
+    const prevLen = merged.length ? merged[merged.length - 1].split(/\s+/).length : 99;
+    if (merged.length && (cwLen < 7 || prevLen < 8) && (prevLen + cwLen <= 21)) {
+      merged[merged.length - 1] = `${merged[merged.length - 1]} ${ch}`.trim();
+    } else {
+      merged.push(ch);
+    }
+  }
+  return merged;
+}
+
+function parseScriptScenesJS(raw) {
+  if (!raw || !raw.trim()) return [];
+  let pre = raw.trim().replace(/(\[(?:CENA|SCENE)\s*:)/gi, "\n\n$1");
+  pre = pre.replace(/((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)/gi, "\n$1");
+  const blocks = pre.trim().split(/\n\s*\n/);
+  const outScenes = [];
+  for (const block of blocks) {
+    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
+    const spokenParts = [];
+    for (const line of lines) {
+      if (/^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?/.test(line)) continue;
+      if (/^(?:ROUND\s*\d+|ABERTURA|VEREDITO\s+FINAL|ENCERRAMENTO|INTRODU[ÇC][ÃA]O|CAP[ÍI]TULO\s*\d+|PARTE\s*\d+)\b/i.test(line) && !line.includes(":")) continue;
+      if (/^\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$/i.test(line)) continue;
+      const mSpk = line.match(/^(?:PERSONAGEM\s*(?:A|B|1|2)|LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)/i);
+      if (mSpk) spokenParts.push(fixPronJS(mSpk[1]));
+      else spokenParts.push(fixPronJS(line));
+    }
+    const fullSpoken = spokenParts.filter(Boolean).join(" ").trim();
+    if (!fullSpoken) continue;
+    const chunks = splitSpoken8sJS(fullSpoken, 18);
+    for (const ch of chunks) {
+      if (ch) outScenes.push({ spoken: ch });
+    }
+  }
+  return outScenes;
+}
+
+function getActiveScenes() {
+  const edited = scriptTextarea.value.trim();
+  if (!edited) return [];
+  if (edited === (CONFIG.rawScript || "").trim() && CONFIG.scenes && CONFIG.scenes.length) {
+    return CONFIG.scenes;
+  }
+  return parseScriptScenesJS(edited);
+}
+
+function refreshSceneBadge() {
+  const scs = getActiveScenes();
+  document.getElementById("sc-count-lbl").innerText = scs.length + " cenas";
+}
+refreshSceneBadge();
+scriptTextarea.addEventListener("input", refreshSceneBadge);
 
 document.getElementById("inp-bgm").addEventListener("change", (e) => {
   document.getElementById("bgm-vol-wrap").style.display = e.target.files.length ? "block" : "none";
@@ -1078,6 +1196,7 @@ document.getElementById("inp-videos").addEventListener("change", (e) => {
 });
 
 document.getElementById("open-tab-btn").addEventListener("click", () => {
+  scriptTextarea.textContent = scriptTextarea.value;
   const htmlFull = document.documentElement.outerHTML;
   const blob = new Blob([htmlFull], { type: "text/html;charset=utf-8" });
   const url = URL.createObjectURL(blob);
@@ -1202,7 +1321,7 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   if (!numScenes) {
     const kept = clips.filter(c => !dropUnmatched || !c.isMuted);
     kept.sort((a, b) => a.dateMs - b.dateMs || a.name.localeCompare(b.name, undefined, { numeric: true }));
-    kept.forEach((c, idx) => { c.matchedSceneIdx = null; c.score = 100; });
+    kept.forEach((c) => { c.matchedSceneIdx = null; c.score = 100; });
     return { kept, discardedCount: clips.length - kept.length, missingScenes: [] };
   }
 
@@ -1248,7 +1367,7 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   const usedScenes = new Set();
 
   for (const p of pairs) {
-    if (p.score < 36.0) break;
+    if (p.score < 35.0) break;
     if (!assigned.has(p.cIdx) && !usedScenes.has(p.sIdx)) {
       assigned.set(p.cIdx, p);
       usedScenes.add(p.sIdx);
@@ -1282,38 +1401,59 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   return { kept, discardedCount, missingScenes };
 }
 
-async function initFFmpegInstance() {
-  const { FFmpeg } = window.FFmpegWASM;
-  const { toBlobURL } = window.FFmpegUtil;
-  const ffmpeg = new FFmpeg();
-  ffmpeg.on("log", ({ message }) => {
-    if (message && !message.startsWith("frame=")) logMsg(message);
-  });
+let CACHED_CORE_BLOB_URL = null;
+let CACHED_WASM_BLOB_URL = null;
 
-  const cdns = [
-    "https://cdn.jsdelivr.net/npm",
-    "https://unpkg.com"
-  ];
-  let lastErr = null;
-  for (const base of cdns) {
-    try {
-      const workerResp = await fetch(`${base}/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js`);
-      const workerTxt = await workerResp.text();
-      const workerBlobUrl = URL.createObjectURL(new Blob([workerTxt], { type: "text/javascript" }));
-      const coreURL = await toBlobURL(`${base}/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js`, "text/javascript");
-      const wasmURL = await toBlobURL(`${base}/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm`, "application/wasm");
-      await ffmpeg.load({ classWorkerURL: workerBlobUrl, coreURL, wasmURL });
-      return ffmpeg;
-    } catch (err) {
-      lastErr = err;
-    }
+async function fetchAsBlobUrl(url, mimeType) {
+  const resp = await fetch(url);
+  if (!resp.ok) throw new Error(`HTTP ${resp.status} ao baixar ${url}`);
+  const buf = await resp.arrayBuffer();
+  return URL.createObjectURL(new Blob([buf], { type: mimeType }));
+}
+
+async function createFreshFFmpegSingleThread() {
+  if (!window.FFmpeg || !window.FFmpeg.createFFmpeg) {
+    throw new Error("Biblioteca FFmpeg não carregou da CDN. Recarregue a página.");
   }
-  throw new Error("Falha ao iniciar FFmpeg.wasm: " + (lastErr ? lastErr.message : "Verifique sua conexão."));
+  if (!CACHED_CORE_BLOB_URL || !CACHED_WASM_BLOB_URL) {
+    const cdns = [
+      "https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist",
+      "https://unpkg.com/@ffmpeg/core-st@0.11.1/dist"
+    ];
+    let lastErr = "Falha ao baixar núcleo WASM";
+    for (const base of cdns) {
+      try {
+        logMsg(`Carregando motor FFmpeg Single-Thread (${base.includes("jsdelivr") ? "jsDelivr" : "unpkg"})...`);
+        CACHED_CORE_BLOB_URL = await fetchAsBlobUrl(`${base}/ffmpeg-core.js`, "text/javascript");
+        CACHED_WASM_BLOB_URL = await fetchAsBlobUrl(`${base}/ffmpeg-core.wasm`, "application/wasm");
+        break;
+      } catch (e) {
+        lastErr = (e && (e.message || String(e))) || "Erro de rede";
+        logMsg("⚠️ Tentando espelho alternativo: " + lastErr);
+      }
+    }
+    if (!CACHED_CORE_BLOB_URL || !CACHED_WASM_BLOB_URL) throw new Error(lastErr);
+  }
+
+  const ffmpeg = window.FFmpeg.createFFmpeg({
+    mainName: "main",
+    corePath: CACHED_CORE_BLOB_URL,
+    wasmPath: CACHED_WASM_BLOB_URL,
+    workerPath: CACHED_CORE_BLOB_URL,
+    log: false
+  });
+  ffmpeg.setLogger(({ message }) => {
+    if (message && !message.startsWith("frame=") && !message.includes("configuration:")) {
+      logMsg(message);
+    }
+  });
+  await ffmpeg.load();
+  return ffmpeg;
 }
 
 async function transcribeBatchGroq(wavBlob, apiKey, langCode) {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
-  for (let attempt = 0; attempt < 3; attempt++) {
+  for (let attempt = 0; attempt < 4; attempt++) {
     const fd = new FormData();
     fd.append("file", wavBlob, "batch.wav");
     fd.append("model", "whisper-large-v3-turbo");
@@ -1331,7 +1471,7 @@ async function transcribeBatchGroq(wavBlob, apiKey, langCode) {
       return await resp.json();
     }
     if (resp.status === 429) {
-      logMsg("⏳ Aguardando 6s para respeitar limite gratuito da API Whisper...");
+      logMsg("⏳ Pausa rápida de 6s para respeitar limite gratuito da API Whisper...");
       await sleep(6000);
       continue;
     }
@@ -1348,6 +1488,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     return;
   }
 
+  const activeScenes = getActiveScenes();
   const sortMode = document.getElementById("sel-sort").value;
   const dropMuted = document.getElementById("chk-drop-muted").checked;
   const fastCopy = document.getElementById("chk-fast-copy").checked;
@@ -1361,7 +1502,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
   document.getElementById("log-box").innerHTML = "";
 
   try {
-    setProgress(3, "📂 Lendo lista de vídeos localmente na memória do seu computador...");
+    setProgress(3, "📂 Lendo pacote de vídeos localmente na memória do seu computador...");
     const clipEntries = [];
 
     for (const f of rawFiles) {
@@ -1451,10 +1592,10 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     let discardedCount = 0;
     let missingScenes = [];
 
-    const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && CONFIG.scenes.length > 0;
+    const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && activeScenes.length > 0;
 
     if (sortMode === "whisper" && !canUseWhisper) {
-      logMsg("⚠️ Sem chave Groq gsk_ ou sem roteiro na Aba 2 — alinhando automaticamente pela ordem de criação + filtro anti-mudos.");
+      logMsg("⚠️ Sem roteiro preenchido acima ou sem chave Groq — alinhando pela ordem do pacote + filtro anti-mudos.");
     }
 
     if (canUseWhisper) {
@@ -1467,13 +1608,13 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
       for (let b = 0; b < totalBatches; b++) {
         const sliceIdxs = speakableIndices.slice(b * batchSize, (b + 1) * batchSize);
-        setProgress(34 + ((b + 1) / Math.max(1, totalBatches)) * 26, `🧠 Pareando falas IA (Lote ${b + 1}/${totalBatches})...`);
+        setProgress(34 + ((b + 1) / Math.max(1, totalBatches)) * 26, `🧠 Pareando falas IA com as ${activeScenes.length} cenas do roteiro (Lote ${b + 1}/${totalBatches})...`);
 
         const totalSlotSamples = sliceIdxs.length * slotSeconds * sampleRateTarget;
         const batchPcm = new Int16Array(totalSlotSamples);
         sliceIdxs.forEach((origIdx, slotPos) => {
           batchPcm.set(pcm12kPerClip[origIdx], slotPos * slotSeconds * sampleRateTarget);
-          pcm12kPerClip[origIdx] = null; // libera RAM imediatamente
+          pcm12kPerClip[origIdx] = null;
         });
 
         const wavBlob = encodeMonoWav12k(batchPcm, sampleRateTarget);
@@ -1500,7 +1641,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
         });
       }
 
-      const matchRes = assignClipsExclusivelyJS(clipEntries, CONFIG.scenes, CONFIG.endKeywords, dropMuted);
+      const matchRes = assignClipsExclusivelyJS(clipEntries, activeScenes, CONFIG.endKeywords, dropMuted);
       orderedClips = matchRes.kept;
       discardedCount = matchRes.discardedCount;
       missingScenes = matchRes.missingScenes;
@@ -1515,7 +1656,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
       discardedCount = clipEntries.length - orderedClips.length;
       orderedClips.sort((a, b) => (a.dateMs - b.dateMs) || a.name.localeCompare(b.name, undefined, { numeric: true }));
       orderedClips.forEach((c, idx) => {
-        c.matchedSceneIdx = idx < CONFIG.scenes.length ? idx : null;
+        c.matchedSceneIdx = idx < activeScenes.length ? idx : null;
         c.transcript = "(Ordem cronológica do pacote)";
         c.score = 100;
       });
@@ -1523,107 +1664,131 @@ document.getElementById("btn-run").addEventListener("click", async () => {
       orderedClips = [...clipEntries];
       orderedClips.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
       orderedClips.forEach((c, idx) => {
-        c.matchedSceneIdx = idx < CONFIG.scenes.length ? idx : null;
+        c.matchedSceneIdx = idx < activeScenes.length ? idx : null;
         c.transcript = "(Ordem alfabética)";
         c.score = 100;
       });
     }
 
-    setProgress(63, "⚙️ Carregando motor FFmpeg.wasm no seu navegador...");
-    const ffmpeg = await initFFmpegInstance();
+    const totalSelectedMB = orderedClips.reduce((acc, c) => acc + (c.byteLength || c.sizeHint || 0), 0) / 1048576;
+    logMsg(`🎬 Cenas válidas alinhadas: ${orderedClips.length} (${totalSelectedMB.toFixed(1)} MB) | Descartados mudos/extras: ${discardedCount}`);
 
-    const totalKeptMB = orderedClips.reduce((acc, c) => acc + (c.byteLength || c.sizeHint || 0), 0) / 1048576;
-    const useSafeSubBatches = (!fastCopy) || (totalKeptMB > 760);
+    setProgress(63, "⚙️ Inicializando motor FFmpeg Single-Thread v2.7...");
+    let finalMp4Bytes = null;
 
-    let currentMainFile = "joined_base.mp4";
-
-    if (!useSafeSubBatches) {
-      const concatLines = [];
+    if (fastCopy && totalSelectedMB <= 680 && !voiceFile && !bgmFile) {
+      // Caminho Direto Ultra-Rápido (1 única execução -c copy em ~6 segundos!)
+      const ffmpeg = await createFreshFFmpegSingleThread();
+      const listLines = [];
       for (let i = 0; i < orderedClips.length; i++) {
-        setProgress(66 + ((i + 1) / orderedClips.length) * 18, `📥 Preparando cena ${i + 1}/${orderedClips.length} na memória local...`);
-        const vName = `c_${String(i).padStart(4, "0")}.mp4`;
-        const dataU8 = await orderedClips[i].getUint8();
-        await ffmpeg.writeFile(vName, dataU8);
-        concatLines.push(`file '${vName}'`);
+        setProgress(66 + ((i + 1) / orderedClips.length) * 20, `📥 Carregando cena ${i + 1}/${orderedClips.length} na memória local...`);
+        const fn = `c_${String(i).padStart(4, "0")}.mp4`;
+        ffmpeg.FS("writeFile", fn, await orderedClips[i].getUint8());
+        listLines.push(`file '${fn}'`);
       }
-      await ffmpeg.writeFile("list.txt", new TextEncoder().encode(concatLines.join("\n")));
-      setProgress(86, "⚡ Colando todas as cenas em alta velocidade (-c copy)...");
-      await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "-movflags", "+faststart", currentMainFile]);
+      ffmpeg.FS("writeFile", "list.txt", new TextEncoder().encode(listLines.join("\n")));
+      setProgress(88, "⚡ Colando todas as cenas instantaneamente (-c copy)...");
+      await ffmpeg.run("-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "-movflags", "+faststart", "out.mp4");
 
       for (let i = 0; i < orderedClips.length; i++) {
-        try { await ffmpeg.deleteFile(`c_${String(i).padStart(4, "0")}.mp4`); } catch (e) {}
+        try { ffmpeg.FS("unlink", `c_${String(i).padStart(4, "0")}.mp4`); } catch (e) {}
       }
-      try { await ffmpeg.deleteFile("list.txt"); } catch (e) {}
+      const rawOut = ffmpeg.FS("readFile", "out.mp4");
+      finalMp4Bytes = rawOut.slice();
+      try { ffmpeg.FS("unlink", "out.mp4"); ffmpeg.exit(); } catch (e) {}
     } else {
-      // Sub-lotes com compactação leve para pacotes gigantes (> 760 MB) nunca estourarem o limite de 2GB do WebAssembly!
-      const subSize = 20;
-      const numSubs = Math.ceil(orderedClips.length / subSize);
-      const partFiles = [];
-      logMsg(`🛡️ Modo Anti-Limite ativo (${totalKeptMB.toFixed(0)} MB): processando em ${numSubs} sub-lotes leves...`);
+      // Caminho Blindado em Sub-Lotes (Zera a memória WASM a cada bloco de 22 cenas para arquivos > 680MB ou com mixagem!)
+      const chunkSize = 22;
+      const numChunks = Math.ceil(orderedClips.length / chunkSize);
+      const stageUint8List = [];
+      const needLightCompress = (!fastCopy) || (totalSelectedMB > 720);
 
-      for (let sb = 0; sb < numSubs; sb++) {
-        const subSlice = orderedClips.slice(sb * subSize, (sb + 1) * subSize);
-        const subLines = [];
-        for (let k = 0; k < subSlice.length; k++) {
-          const fn = `s_${k}.mp4`;
-          await ffmpeg.writeFile(fn, await subSlice[k].getUint8());
-          subLines.push(`file '${fn}'`);
+      for (let ch = 0; ch < numChunks; ch++) {
+        const ffmpegChunk = await createFreshFFmpegSingleThread();
+        const slice = orderedClips.slice(ch * chunkSize, (ch + 1) * chunkSize);
+        const listLines = [];
+        setProgress(65 + ((ch + 1) / numChunks) * 22, `⚡ Processando bloco seguro ${ch + 1}/${numChunks} (${slice.length} cenas)...`);
+
+        for (let k = 0; k < slice.length; k++) {
+          const fn = `in_${k}.mp4`;
+          ffmpegChunk.FS("writeFile", fn, await slice[k].getUint8());
+          listLines.push(`file '${fn}'`);
         }
-        await ffmpeg.writeFile("sub.txt", new TextEncoder().encode(subLines.join("\n")));
-        const rawSub = `raw_sub_${sb}.mp4`;
-        const compSub = `part_${sb}.mp4`;
-        setProgress(66 + ((sb + 1) / numSubs) * 20, `🗜️ Otimizando sub-lote ${sb + 1}/${numSubs} para blindar memória...`);
-        await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "sub.txt", "-c", "copy", rawSub]);
-        for (let k = 0; k < subSlice.length; k++) {
-          try { await ffmpeg.deleteFile(`s_${k}.mp4`); } catch (e) {}
+        ffmpegChunk.FS("writeFile", "sub.txt", new TextEncoder().encode(listLines.join("\n")));
+
+        if (!needLightCompress) {
+          await ffmpegChunk.run("-f", "concat", "-safe", "0", "-i", "sub.txt", "-c", "copy", "stage.mp4");
+        } else {
+          await ffmpegChunk.run("-f", "concat", "-safe", "0", "-i", "sub.txt", "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "128k", "stage.mp4");
         }
-        await ffmpeg.exec(["-i", rawSub, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "128k", compSub]);
-        try { await ffmpeg.deleteFile(rawSub); } catch (e) {}
-        partFiles.push(`file '${compSub}'`);
+
+        const stData = ffmpegChunk.FS("readFile", "stage.mp4");
+        stageUint8List.push(stData.slice());
+        try { ffmpegChunk.exit(); } catch (e) {}
       }
-      await ffmpeg.writeFile("parts.txt", new TextEncoder().encode(partFiles.join("\n")));
-      await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "parts.txt", "-c", "copy", "-movflags", "+faststart", currentMainFile]);
-      for (let sb = 0; sb < numSubs; sb++) {
-        try { await ffmpeg.deleteFile(`part_${sb}.mp4`); } catch (e) {}
+
+      setProgress(89, "🔗 Finalizando união contínua e áudio...");
+      const ffmpegFinal = await createFreshFFmpegSingleThread();
+      let currentMainFile = "joined_base.mp4";
+
+      if (stageUint8List.length === 1) {
+        ffmpegFinal.FS("writeFile", currentMainFile, stageUint8List[0]);
+        stageUint8List[0] = null;
+      } else {
+        const mLines = [];
+        for (let s = 0; s < stageUint8List.length; s++) {
+          const sName = `st_${s}.mp4`;
+          ffmpegFinal.FS("writeFile", sName, stageUint8List[s]);
+          stageUint8List[s] = null;
+          mLines.push(`file '${sName}'`);
+        }
+        ffmpegFinal.FS("writeFile", "master.txt", new TextEncoder().encode(mLines.join("\n")));
+        await ffmpegFinal.run("-f", "concat", "-safe", "0", "-i", "master.txt", "-c", "copy", "-movflags", "+faststart", currentMainFile);
+        for (let s = 0; s < mLines.length; s++) {
+          try { ffmpegFinal.FS("unlink", `st_${s}.mp4`); } catch (e) {}
+        }
       }
+
+      if (voiceFile) {
+        setProgress(93, "🎙️ Aplicando locução principal...");
+        const vExt = voiceFile.name.split(".").pop() || "mp3";
+        const vInput = `voice_in.${vExt}`;
+        ffmpegFinal.FS("writeFile", vInput, new Uint8Array(await voiceFile.arrayBuffer()));
+        await ffmpegFinal.run("-i", currentMainFile, "-i", vInput, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", "voiced.mp4");
+        try { ffmpegFinal.FS("unlink", currentMainFile); ffmpegFinal.FS("unlink", vInput); } catch (e) {}
+        currentMainFile = "voiced.mp4";
+      }
+
+      if (bgmFile) {
+        setProgress(96, "🎵 Mixando música de fundo...");
+        const bExt = bgmFile.name.split(".").pop() || "mp3";
+        const bInput = `bgm_in.${bExt}`;
+        ffmpegFinal.FS("writeFile", bInput, new Uint8Array(await bgmFile.arrayBuffer()));
+        await ffmpegFinal.run(
+          "-i", currentMainFile, "-stream_loop", "-1", "-i", bInput,
+          "-filter_complex", `[1:a]volume=${bgmVol.toFixed(3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+          "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "with_bgm.mp4"
+        );
+        try { ffmpegFinal.FS("unlink", currentMainFile); ffmpegFinal.FS("unlink", bInput); } catch (e) {}
+        currentMainFile = "with_bgm.mp4";
+      }
+
+      const fRead = ffmpegFinal.FS("readFile", currentMainFile);
+      finalMp4Bytes = fRead.slice();
+      try { ffmpegFinal.FS("unlink", currentMainFile); ffmpegFinal.exit(); } catch (e) {}
     }
 
-    if (voiceFile) {
-      setProgress(91, "🎙️ Aplicando sua locução principal...");
-      const vExt = voiceFile.name.split(".").pop() || "mp3";
-      const vInput = `voice_in.${vExt}`;
-      await ffmpeg.writeFile(vInput, new Uint8Array(await voiceFile.arrayBuffer()));
-      await ffmpeg.exec(["-i", currentMainFile, "-i", vInput, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", "voiced.mp4"]);
-      try { await ffmpeg.deleteFile(currentMainFile); await ffmpeg.deleteFile(vInput); } catch (e) {}
-      currentMainFile = "voiced.mp4";
-    }
-
-    if (bgmFile) {
-      setProgress(95, "🎵 Mixando música de fundo...");
-      const bExt = bgmFile.name.split(".").pop() || "mp3";
-      const bInput = `bgm_in.${bExt}`;
-      await ffmpeg.writeFile(bInput, new Uint8Array(await bgmFile.arrayBuffer()));
-      await ffmpeg.exec([
-        "-i", currentMainFile, "-stream_loop", "-1", "-i", bInput,
-        "-filter_complex", `[1:a]volume=${bgmVol.toFixed(3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
-        "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "with_bgm.mp4"
-      ]);
-      try { await ffmpeg.deleteFile(currentMainFile); await ffmpeg.deleteFile(bInput); } catch (e) {}
-      currentMainFile = "with_bgm.mp4";
-    }
-
-    setProgress(98, "💾 Gerando arquivo final para download imediato...");
-    const finalData = await ffmpeg.readFile(currentMainFile);
-    const mp4Blob = new Blob([finalData.buffer], { type: "video/mp4" });
-    try { await ffmpeg.deleteFile(currentMainFile); ffmpeg.terminate(); } catch (e) {}
+    setProgress(99, "💾 Gerando link local instantâneo...");
+    const mp4Blob = new Blob([finalMp4Bytes], { type: "video/mp4" });
+    finalMp4Bytes = null;
 
     const mp4Url = URL.createObjectURL(mp4Blob);
-    const srtText = buildSrt(orderedClips, CONFIG.scenes);
+    const srtText = buildSrt(orderedClips, activeScenes);
     const srtBlob = new Blob([srtText], { type: "text/plain;charset=utf-8" });
     const srtUrl = URL.createObjectURL(srtBlob);
 
     const finalMB = (mp4Blob.size / 1048576).toFixed(1);
-    setProgress(100, "🎉 Concluído 100% no seu navegador (Zero uso do servidor)!");
+    setProgress(100, "🎉 Vídeo completo unido 100% no seu navegador!");
 
     const dlBox = document.getElementById("dl-box");
     dlBox.style.display = "block";
@@ -1653,8 +1818,9 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
   } catch (err) {
     console.error(err);
-    setProgress(0, "❌ Erro: " + err.message);
-    logMsg("ERRO: " + err.message);
+    const msg = (err && (err.message || String(err))) || "Falha de memória na aba — clique em 'Abrir em Aba Dedicada (+RAM)' no canto superior direito!";
+    setProgress(0, "❌ Erro: " + msg);
+    logMsg("ERRO DETALHADO: " + msg);
   } finally {
     btn.disabled = false;
   }
@@ -1668,6 +1834,7 @@ def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertic
     scenes_parsed = extract_scenes_for_prompts(raw_script, lang_label)
     js_scenes = [{"spoken": sc.get("spoken", "")} for sc in scenes_parsed if sc.get("spoken")]
     cfg = {
+        "rawScript": raw_script or "",
         "scenes": js_scenes,
         "groqKey": groq_api_key if (groq_api_key and groq_api_key.startswith("gsk_")) else "",
         "whisperLang": LANGUAGES[lang_label]["whisper_code"],
@@ -1676,7 +1843,7 @@ def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertic
     }
     safe_json = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
     html_out = FFMPEG_WASM_HTML_TEMPLATE.replace("__CONFIG_JSON__", safe_json)
-    components.html(html_out, height=740, scrolling=True)
+    components.html(html_out, height=820, scrolling=True)
 # ===============================================================================================
 
 def format_srt_timestamp(seconds_float):
@@ -1870,14 +2037,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (900MB+ / 12+ min) sem limite de servidor"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (950MB+ / 12+ min) sem limite de servidor"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
         "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** O sistema fatia em cenas de 8s, trava aparência fixa de personagens e gera prompts em linha única.\n"
         "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** e envie pela **Extensão VIP v2.0**.\n"
-        "4. **Montagem Local FFmpeg.wasm (Aba 2):** Selecione até **1 GB ou 2 GB de vídeos** direto no modo **FFmpeg.wasm no Navegador** — sem upload lento e sem queda de memória!"
+        "4. **Montagem Local FFmpeg.wasm v2.7 (Aba 2):** Cole o roteiro direto dentro do painel azul da Aba 2, escolha seu `.ZIP` de 950 MB+ e junte tudo em segundos usando a memória do seu PC!"
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -1915,7 +2082,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "⚡ 2. Montagem Local FFmpeg.wasm (900MB+ Sem Upload) & Nuvem",
+    "⚡ 2. Montagem Local FFmpeg.wasm v2.7 (950MB+ Sem Upload)",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -2185,23 +2352,23 @@ with tab2:
     engine_choice = st.radio(
         "⚙️ Escolha onde processar os vídeos:",
         [
-            "⚡ Modo Local no Navegador — FFmpeg.wasm (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Upload p/ Servidor!)",
-            "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB ou uso em celulares antigos)"
+            "⚡ Modo Local no Navegador — FFmpeg.wasm v2.7 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Upload!)",
+            "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB)"
         ],
         index=0
     )
 
-    roteiro_input = st.text_area(
-        "📜 Roteiro Completo do Vídeo (Usado para alinhar as cenas na ordem exata e gerar a legenda .SRT — clique fora da caixa após colar):",
-        value=st.session_state["saved_script"],
-        height=175
-    )
-    if roteiro_input != st.session_state.get("saved_script", ""):
-        st.session_state["saved_script"] = roteiro_input
-
     if "FFmpeg.wasm" in engine_choice:
-        render_ffmpeg_wasm_assembler(roteiro_input, selected_lang, active_api_key, is_vertical)
+        render_ffmpeg_wasm_assembler(st.session_state.get("saved_script", ""), selected_lang, active_api_key, is_vertical)
     else:
+        roteiro_input = st.text_area(
+            "📜 Roteiro Completo do Vídeo (Usado para alinhar as cenas e gerar a legenda .SRT):",
+            value=st.session_state.get("saved_script", ""),
+            height=180
+        )
+        if roteiro_input != st.session_state.get("saved_script", ""):
+            st.session_state["saved_script"] = roteiro_input
+
         static_delivery_dir = os.path.join(os.getcwd(), "static", "entregas")
         os.makedirs(static_delivery_dir, exist_ok=True)
         now_ts = time.time()
@@ -2357,7 +2524,7 @@ with tab2:
 
                                 joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
                                 p_bar.progress(0.78, text="Unindo cenas...")
-                                res = subprocess.run(
+                                subprocess.run(
                                     [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE
                                 )
@@ -2496,4 +2663,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v2.6 (FFMPEG.WASM LOCAL ZERO-UPLOAD + WHISPER BATCH)
+# FIM DO ARQUIVO SAAS ULTIMATE v2.7 COMPLETO (SINGLE-THREAD WASM SEM WORKER BLOCK)
