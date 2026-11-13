@@ -149,13 +149,13 @@ LANGUAGES = {
 
 STYLE_PRESETS = {
     "Cinematográfico Realista 4K": (
-        "Photorealistic 4K documentary footage, single continuous camera shot, natural daylight, zero text or signs on screen."
+        "Photorealistic 4K cinema footage, natural lighting, period-accurate wardrobe and setting, single continuous camera shot, zero text or signs on screen."
     ),
     "Cartoon 3D Pixar": (
-        "3D Pixar-style animated film look, vibrant colors, soft lighting, single continuous shot, zero text on screen."
+        "3D Pixar-style animated feature film look, vibrant colors, soft global illumination, characters wearing period-accurate clothing faithful to the story era (zero anachronistic modern caps or clothes), single continuous shot, zero text on screen."
     ),
-    "Boneco Palito 2D (Com Boné Azul)": (
-        "2D flat vector animation, consistent white stick figure character wearing a blue cap, single continuous shot, zero text."
+    "Boneco Palito 2D": (
+        "2D flat minimalist vector animation, consistent simple white stick figure characters dressed for the story context, clean background, single continuous shot, zero text on screen."
     ),
     "Personalizado (Definir abaixo)": ""
 }
@@ -288,9 +288,9 @@ def build_chrome_extension_zip():
     readme_str = (
         "COMO ATUALIZAR PARA A EXTENSÃO VIP v2.0 NO CHROME:\n"
         "1. Extraia este .ZIP numa pasta nova no seu computador.\n"
-        "2. Abra chrome://extensions no navegador e REMOVA a versão 1.0 antiga.\n"
+        "2. Abra chrome://extensions no navegador e REMOVA a versão antiga.\n"
         "3. Clique em 'Carregar sem compactação' e selecione a nova pasta extraída.\n"
-        "4. Recarregue a página do Google Flow (F5) — o painel agora mostrará 'Auto Flow v2.0' em verde!\n"
+        "4. Recarregue a página do Google Flow (F5) — o painel mostrará 'Auto Flow v2.0' em verde!\n"
         "IMPORTANTE NO GOOGLE FLOW: Use o modelo Veo 3 (com áudio ativo) e deixe a varinha de 'Expandir/Reescrever comando' DESATIVADA."
     )
     mem_zip = io.BytesIO()
@@ -344,8 +344,14 @@ def fix_pronunciation(text, lang_label):
 def get_compact_voice_profile(gender_choice, custom_voice_desc=""):
     extra = f", {custom_voice_desc.strip()}" if custom_voice_desc.strip() else ""
     if "Masculina" in gender_choice:
-        return f"Same 35-year-old male documentary narrator (warm deep baritone 115 Hz, clean studio mic{extra})"
-    return f"Same 32-year-old female documentary narrator (warm smooth mezzo-soprano 195 Hz, clean studio mic{extra})"
+        return (
+            f"EXACT SAME adult 35-year-old male studio narrator (deep chest-resonant baritone 115 Hz, Neumann mic{extra}; "
+            f"NEVER use female or child voices even if boys, girls, or women appear on screen)"
+        )
+    return (
+        f"EXACT SAME adult 32-year-old female studio narrator (smooth mezzo-soprano 195 Hz, Neumann mic{extra}; "
+        f"NEVER use male or child voices even if men or boys appear on screen)"
+    )
 
 def clean_markdown(txt):
     txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL).strip()
@@ -457,7 +463,7 @@ def analyze_character_photo(uploaded_img, api_key):
     b64_data = base64.b64encode(img_bytes).decode("utf-8")
     vision_prompt = (
         "Analyze this character image and write a concise physical and clothing description in ONE English sentence "
-        "(30 to 45 words) to lock visual identity across AI video scenes: apparent age, skin tone, hair, facial hair, "
+        "(30 to 45 words) to lock visual identity across AI video scenes: biological sex/gender, apparent age, skin tone, hair, facial hair, "
         "headwear, and exact outfit colors. Output ONLY the single English sentence."
     )
 
@@ -580,8 +586,8 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"Character A: {char_a_desc}\n"
             f"Character B: {char_b_desc}\n\n"
             f"RULES:\n"
-            f"1. ZERO REPEATED QUESTIONS: Track details revealed in earlier scenes and advance logically.\n"
-            f"2. NATIVE SPEECH: Write authentic everyday {lang_en}, strictly 12 to 17 words per scene.\n"
+            f"1. STRICT CHRONOLOGICAL PROGRESSION (ZERO REPETITION): Never repeat questions or opening lines. Every scene MUST advance the story forward.\n"
+            f"2. NATIVE SPEECH & GENDER ACCURACY: Write authentic {lang_en} (12 to 17 words per scene) with 100% accurate grammatical gender.\n"
             f"3. ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B.\n"
             f"4. FIXED SETTING: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
@@ -591,31 +597,34 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
         )
     else:
         if single_char_desc.strip():
-            char_hint = f"the protagonist ({single_char_desc.strip()}) exploring the real location silently"
+            char_hint = f"the exact protagonist ({single_char_desc.strip()}) with mouth closed in silence"
         elif "Palito" in style_choice:
-            char_hint = "the white stick figure wearing a blue cap exploring the real location"
+            char_hint = "white stick figure characters dressed appropriately for the story's era and context"
         elif "Cartoon" in style_choice:
-            char_hint = "the 3D character wearing a blue cap exploring the real location"
+            char_hint = (
+                "3D Pixar-style characters with consistent hair, skin tone, and STRICTLY PERIOD-ACCURATE clothing "
+                "(e.g., ancient woven tunics/sandals for biblical/ancient stories, NEVER modern baseball caps, t-shirts, or jeans unless modern-day)"
+            )
         else:
-            char_hint = "specific cinematic documentary footage of the real named city, landmark, or subject"
+            char_hint = "period-accurate cinematic documentary footage of the real location, historical era, or characters"
 
         prompt_text = (
-            f"You are a rigorous, fact-checked documentary researcher and scriptwriter.\n"
-            f"Topic / Title: '{title}'\n"
+            f"You are a master storyteller and fact-checked documentary screenwriter.\n"
+            f"Topic / Story Title: '{title}'\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
-            f"RULES:\n"
-            f"1. 100% VERIFIED REAL FACTS ONLY.\n"
-            f"2. SPELL OUT ACRONYMS AND UNITS in full words in {lang_en}.\n"
-            f"3. TIMING: Every LOCUÇÃO MUST have strictly 14 to 18 words in {lang_en}.\n"
-            f"4. SPECIFIC VISUALS IN ENGLISH: Every [CENA: ...] MUST explicitly name the real city/place/landmark in Brazil or the world in English ({char_hint}), zero text, mouths closed.\n\n"
+            f"CRITICAL STORYTELLING, GENDER & WARDROBE LOCK RULES:\n"
+            f"1. STRICT CHRONOLOGICAL ARC (ZERO REPETITION): Scene 1 hooks the viewer; Scenes 2 to {num_scenes - 1} advance step-by-step chronologically from setup to climax and resolution (NEVER repeat the opening setup or re-introduce the same valley/city in multiple scenes; NEVER show the ending before the climax!). Scene {num_scenes} ends with a Call-to-Action.\n"
+            f"2. STRICT GENDER & IDENTITY LOCK: Explicitly state biological gender, age, and consistent wardrobe in EVERY [CENA: ...] in English (e.g., 'young teenage male shepherd boy David in a simple beige linen tunic', 'giant armored male warrior Goliath'). In {lang_en} narration, use 100% matching grammatical gender (e.g., 'um jovem pastor chamado Davi', NEVER female forms for male characters).\n"
+            f"3. PERIOD-ACCURATE WARDROBE: Visuals MUST feature {char_hint}. NEVER put modern caps, sneakers, or striped t-shirts on biblical or historical characters.\n"
+            f"4. TIMING & PRONUNCIATION: Every LOCUÇÃO MUST have strictly 13 to 18 words in {lang_en}, with all numbers and acronyms spelled out in full words. All characters on screen keep mouths closed (off-screen narration).\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Specific continuous shot in English naming the real location, no text, mouths closed]\n"
-            f"LOCUÇÃO: Verified narration in {lang_en} (14-18 words)."
+            f"[CENA: Single continuous shot in English specifying character gender, period-accurate outfit, and action, mouths closed, zero text]\n"
+            f"LOCUÇÃO: Engaging, non-repetitive narration in {lang_en} (13-18 words)."
         )
 
-    temp_val = 0.45 if "Diálogo" in audio_mode else 0.2
-    sys_msg = "Output ONLY the requested formatted script scenes."
+    temp_val = 0.4 if "Diálogo" in audio_mode else 0.25
+    sys_msg = "Output ONLY the requested formatted script scenes in strict chronological order without repeating introductions."
     out, err = call_llm_text(sys_msg, prompt_text, api_key, temperature=temp_val)
     if err:
         return "", err
@@ -642,7 +651,7 @@ def generate_seo_and_thumbnail_kit(title, script_text, lang_label, aspect_label,
         f"1. 🔥 5 TÍTULOS MAGNÉTICOS DE ALTO CTR\n"
         f"2. 📝 DESCRIÇÃO OTIMIZADA COM SEO + CAPÍTULOS (00:00)\n"
         f"3. 🏷️ 20 TAGS DE ALTO VOLUME (comma-separated)\n"
-        f"4. 🖼️ PROMPT PRONTO PARA CAPA / THUMBNAIL ({orient}, in English, vivid visual hook, zero gibberish text)"
+        f"4. 🖼️ PROMPT PRONTO PARA CAPA / THUMBNAIL ({orient}, in English, vivid visual hook, period-accurate wardrobe, zero gibberish text)"
     )
     sys_msg = "You are a YouTube & TikTok viral growth strategist."
     return call_llm_text(sys_msg, seo_prompt, api_key, temperature=0.5)
@@ -713,7 +722,7 @@ def looks_non_english_visual(text):
         return True
     if re.search(r'[áàâãéêíóôõúçÁÀÂÃÉÊÍÓÔÕÚÇ]', text):
         return True
-    pt_markers = r'\b(vista|aérea|imagem|imagens|tela|dividida|prédios|cidade|ruas|morros|carretas|comércio|feiras|padarias|pôr do sol|câmera|mostrando|pessoas|famílias|centro|bairro)\b'
+    pt_markers = r'\b(vista|aérea|imagem|imagens|tela|dividida|prédios|cidade|ruas|morros|carretas|comércio|feiras|padarias|pôr do sol|câmera|mostrando|pessoas|famílias|centro|bairro|menino|gigante|pedra|vale)\b'
     return bool(re.search(pt_markers, text, flags=re.IGNORECASE))
 
 def extract_scenes_for_prompts(raw_script, lang_label):
@@ -727,11 +736,11 @@ def extract_scenes_for_prompts(raw_script, lang_label):
 
     blocks = re.split(r'\n\s*\n', pre.strip())
     camera_angles = [
-        "Aerial drone establishing shot",
-        "Smooth street-level gimbal shot",
-        "Wide cinematic view",
-        "High panoramic drone shot",
-        "Dynamic tracking camera shot"
+        "Wide cinematic establishing shot",
+        "Smooth tracking camera shot",
+        "Medium expressive cinematic shot",
+        "Sweeping panoramic camera movement",
+        "Dynamic push-in shot with shallow depth of field"
     ]
 
     scenes = []
@@ -791,10 +800,6 @@ def extract_scenes_for_prompts(raw_script, lang_label):
     return scenes
 
 def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, single_char_desc, api_key, progress_placeholder=None):
-    """
-    Cria cenários específicos em Inglês quando o usuário cola texto puro (sem [CENA:])
-    ou traduz/otimiza para Inglês técnico quando o usuário escreve [CENA:] em Português.
-    """
     pending_indices = [i for i, sc in enumerate(scenes) if sc.get("needs_ai_visual")]
     if not pending_indices:
         return scenes
@@ -803,19 +808,22 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     if not clean_key:
         for i in pending_indices:
             hint = scenes[i].get("raw_visual_hint", "").strip()
-            scenes[i]["visual"] = hint if hint else "Cinematic 4K footage illustrating the narrated topic in natural daylight, zero text on screen"
+            scenes[i]["visual"] = hint if hint else "Cinematic 4K footage illustrating the narrated scene with period-accurate wardrobe, zero text"
         return scenes
 
     if "Diálogo" in audio_mode:
         subject_rule = "Medium two-shot in the exact same room showing the active speaker talking while the other listens silently."
     elif single_char_desc.strip():
-        subject_rule = f"Include the protagonist ({single_char_desc.strip()}) naturally in the scene with mouth closed."
+        subject_rule = f"Include the exact protagonist ({single_char_desc.strip()}) naturally in the scene with mouth closed."
     elif "Palito" in style_choice:
-        subject_rule = "Feature the white stick figure wearing a blue cap experiencing the narrated moment."
+        subject_rule = "Feature simple white stick figure characters dressed appropriately for the story era."
     elif "Cartoon" in style_choice:
-        subject_rule = "Feature the 3D animated character experiencing the narrated moment."
+        subject_rule = (
+            "Feature 3D Pixar-style characters with explicit biological gender (e.g., 'young male shepherd boy David') "
+            "and STRICTLY PERIOD-ACCURATE wardrobe matching the story era (NEVER modern caps or jeans in historical/biblical themes)."
+        )
     else:
-        subject_rule = "Pure cinematic B-roll matching the exact subject, object, historical era, or real named location (keep proper city/landmark names)."
+        subject_rule = "Cinematic footage matching the exact historical era, real named location, and explicit character gender, mouths closed."
 
     batch_size = 25
     total_batches = math.ceil(len(pending_indices) / batch_size)
@@ -824,7 +832,7 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
         batch_idxs = pending_indices[start:start + batch_size]
         if progress_placeholder is not None:
             progress_placeholder.info(
-                f"🎬 Diretor Visual IA criando/traduzindo cenários em inglês para o seu roteiro (Lote {b_num}/{total_batches})..."
+                f"🎬 Diretor Visual IA criando cenários fiéis à época e aos personagens (Lote {b_num}/{total_batches})..."
             )
 
         lines_in = []
@@ -834,17 +842,17 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
             lines_in.append(f"{idx + 1}|Narration: {sc['spoken']}{hint_part}")
 
         user_p = (
-            f"Video Overall Topic: '{topic_hint or 'General Documentary / Story'}'\n"
-            f"Visual Rule: {subject_rule}\n\n"
-            f"For each numbered item below, write ONE specific 8-second continuous camera shot description in ENGLISH (14 to 24 words) "
-            f"that visually illustrates the exact narration (and translates/incorporates the Visual Hint if provided). "
-            f"Vary camera angles naturally across consecutive lines. STRICTLY NO on-screen text, NO signs, NO split-screens, NO charts.\n\n"
+            f"Video Overall Topic: '{topic_hint or 'Story / Documentary'}'\n"
+            f"Visual & Wardrobe Rule: {subject_rule}\n\n"
+            f"For each numbered item below, write ONE specific 8-second continuous camera shot in ENGLISH (16 to 26 words) "
+            f"that visually illustrates the exact action of that narration line. Explicitly specify biological gender (male/female) "
+            f"and keep consistent period-accurate clothing for recurring characters. STRICTLY NO on-screen text, NO signs, NO modern clothes in ancient stories.\n\n"
             f"Format EVERY output line strictly as:\n"
             f"NUMBER|English visual shot description\n\n"
             f"ITEMS:\n" + "\n".join(lines_in)
         )
-        sys_p = "You are an expert AI video director for Google Veo. Output ONLY 'NUMBER|English visual description' lines, one per item."
-        out_txt, err = call_llm_text(sys_p, user_p, clean_key, temperature=0.3)
+        sys_p = "You are an expert AI film director for Google Veo. Output ONLY 'NUMBER|English visual description' lines."
+        out_txt, err = call_llm_text(sys_p, user_p, clean_key, temperature=0.25)
 
         parsed_map = {}
         if not err and out_txt:
@@ -861,7 +869,7 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
                 scenes[idx]["visual"] = parsed_map[idx + 1]
                 scenes[idx]["needs_ai_visual"] = False
             elif not scenes[idx].get("visual"):
-                scenes[idx]["visual"] = f"Cinematic continuous shot illustrating {topic_hint or 'the narrated scene'}, natural lighting, zero text"
+                scenes[idx]["visual"] = f"Cinematic continuous shot illustrating {topic_hint or 'the narrated scene'}, period-accurate setting, zero text"
 
     if progress_placeholder is not None:
         progress_placeholder.empty()
@@ -887,8 +895,11 @@ def build_synchronized_srt(ordered_results, raw_script, lang_label):
         if clip_dur <= 0.5:
             clip_dur = 8.0
 
+        matched_sc_idx = item.get("matched_scene_idx")
         text_line = ""
-        if i < len(script_scenes) and script_scenes[i]["spoken"]:
+        if matched_sc_idx is not None and 0 <= matched_sc_idx < len(script_scenes) and script_scenes[matched_sc_idx]["spoken"]:
+            text_line = script_scenes[matched_sc_idx]["spoken"]
+        elif i < len(script_scenes) and script_scenes[i]["spoken"]:
             text_line = script_scenes[i]["spoken"]
         elif item.get("transcript") and item["transcript"] != "(Ordenado por nome)":
             text_line = item["transcript"]
@@ -920,15 +931,9 @@ def normalize_text(text):
     text = re.sub(r'[^a-z0-9\s]', ' ', text)
     return re.sub(r'\s+', ' ', text).strip()
 
-def parse_script_text(raw, lang_label):
-    scenes = extract_scenes_for_prompts(raw, lang_label)
-    spoken_lines = [sc["spoken"] for sc in scenes if sc.get("spoken")]
-    full_spoken = " ".join(spoken_lines) if spoken_lines else raw
-    return normalize_text(full_spoken), normalize_text(raw)
-
 def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpeg_exe):
     import speech_recognition as sr
-    for start_sec, dur_sec in [('0.0', '8.0'), ('0.6', '7.2'), ('1.2', '6.5'), ('0.0', '4.5')]:
+    for start_sec, dur_sec in [('0.0', '8.0'), ('0.4', '7.5'), ('1.0', '6.8'), ('0.0', '4.8')]:
         try:
             cmd = [ffmpeg_exe, '-y', '-ss', start_sec, '-i', video_path, '-t', dur_sec, '-vn', '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', temp_wav]
             subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
@@ -941,32 +946,89 @@ def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpe
             continue
     return ""
 
-def find_position_in_script(transcript, full_spoken_norm, lang_label):
+# ======= PAREAMENTO EXCLUSIVO CENA-A-CENA (IMPEDE INVERSÃO CRONOLÓGICA) =======
+def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label):
+    """
+    Compara a transcrição completa de cada vídeo com cada cena individual do roteiro
+    e atribui 1 vaga exclusiva por cena (evita confundir palavras repetidas como 'Vale de Elá').
+    """
     from rapidfuzz import fuzz
-    t_norm = normalize_text(transcript)
-    if any(kw in t_norm for kw in LANGUAGES[lang_label]["end_keywords"]):
-        return len(full_spoken_norm) + 500, 100
-    if t_norm and len(t_norm) >= 4:
-        words = t_norm.split()
-        script_len = len(full_spoken_norm)
-        for n_words in (6, 5, 4, 3, 2):
-            if len(words) >= n_words:
-                for offset in range(min(3, len(words) - n_words + 1)):
-                    snippet = ' '.join(words[offset:offset + n_words])
-                    if len(snippet) >= 8:
-                        idx = full_spoken_norm.find(snippet)
-                        if idx != -1:
-                            return max(0, idx - (offset * 6)), 100
-        best_pos, best_score = 0, -1
-        w_size = max(len(t_norm), 25)
-        for pos in range(0, max(1, script_len - 8), 3):
-            seg = full_spoken_norm[pos:min(script_len, pos + w_size + 20)]
-            score = (fuzz.partial_ratio(t_norm, seg) * 0.65) + (fuzz.token_set_ratio(t_norm, seg) * 0.35)
-            if score > best_score:
-                best_score, best_pos = score, pos
-        if best_score >= 50:
-            return best_pos, best_score
-    return 999999, 0
+
+    script_scenes = extract_scenes_for_prompts(raw_script, lang_label)
+    scene_norms = [normalize_text(sc.get("spoken", "")) for sc in script_scenes]
+    num_scenes = len(scene_norms)
+
+    if num_scenes == 0:
+        clips_info.sort(key=lambda x: x["original_name"].lower())
+        for idx, c in enumerate(clips_info):
+            c["position"] = idx
+            c["matched_scene_idx"] = None
+        return clips_info
+
+    end_kws = LANGUAGES[lang_label]["end_keywords"]
+    candidate_pairs = []
+    best_scene_for_clip = {}
+
+    for c_idx, clip in enumerate(clips_info):
+        t_norm = normalize_text(clip.get("transcript", ""))
+        if not t_norm or len(t_norm) < 3:
+            continue
+
+        has_end_kw = any(kw in t_norm for kw in end_kws)
+        best_j, best_sc = 0, -1.0
+
+        for s_idx, s_norm in enumerate(scene_norms):
+            if not s_norm:
+                continue
+            # Compara a FRASE INTEIRA (ratio + token_sort_ratio) para diferenciar cenas parecidas
+            r_full = fuzz.ratio(t_norm, s_norm)
+            r_sort = fuzz.token_sort_ratio(t_norm, s_norm)
+            r_part = fuzz.partial_ratio(t_norm, s_norm)
+            score = (r_full * 0.48) + (r_sort * 0.34) + (r_part * 0.18)
+
+            if has_end_kw and s_idx == num_scenes - 1:
+                score += 20.0
+
+            candidate_pairs.append((score, c_idx, s_idx))
+            if score > best_sc:
+                best_sc, best_j = score, s_idx
+
+        best_scene_for_clip[c_idx] = (best_j, best_sc)
+
+    # Ordena todos os pares do maior score de frase completa para o menor
+    candidate_pairs.sort(key=lambda x: x[0], reverse=True)
+
+    assigned_clips = {}
+    used_scenes = set()
+
+    # 1ª Passada: Vaga exclusiva 1-para-1 (cada cena recebe primeiro o clipe mais idêntico a ela)
+    for score, c_idx, s_idx in candidate_pairs:
+        if score < 28.0:
+            break
+        if c_idx not in assigned_clips and s_idx not in used_scenes:
+            assigned_clips[c_idx] = (float(s_idx), s_idx, score)
+            used_scenes.add(s_idx)
+
+    # 2ª Passada: Clipes extras/takes repetidos ou sem fala reconhecida
+    for c_idx, clip in enumerate(clips_info):
+        if c_idx in assigned_clips:
+            pos_val, sc_i, sc_score = assigned_clips[c_idx]
+            clip["position"] = pos_val
+            clip["matched_scene_idx"] = sc_i
+            clip["match_score"] = round(sc_score, 1)
+        elif c_idx in best_scene_for_clip and best_scene_for_clip[c_idx][1] >= 35.0:
+            best_j, b_sc = best_scene_for_clip[c_idx]
+            clip["position"] = float(best_j) + 0.45
+            clip["matched_scene_idx"] = best_j
+            clip["match_score"] = round(b_sc, 1)
+        else:
+            clip["position"] = 99999.0 + c_idx
+            clip["matched_scene_idx"] = None
+            clip["match_score"] = 0.0
+
+    clips_info.sort(key=lambda x: (x["position"], x["original_name"].lower()))
+    return clips_info
+# ==============================================================================
 
 # ================= TOPO DO ESTÚDIO & VÍDEO TUTORIAL =================
 is_admin = (st.session_state.get("user_role") == "admin")
@@ -986,14 +1048,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo sem cortes de idioma"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo com ordem e voz perfeitas"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
-        "2. **Crie pela IA ou Cole Qualquer Texto Puro (Aba 1):** Pode colar roteiro com tempo, sem tempo, com `[CENA:]` em português ou **só o texto puro corrido** — o Diretor Visual IA fatia de 8 em 8s e cria os cenários em inglês automaticamente!\n"
-        "3. **No Google Flow:** Use o modelo **Veo 3 (com Áudio ligado)**, deixe a opção de **Expandir/Reescrever prompt (varinha)** desativada e use a **Extensão VIP v2.0**!\n"
-        "4. **Montagem & SEO (Abas 2 e 3):** Suba o `.ZIP` na **Aba 2** para ordenar pela fala em português e baixar o `.MP4` + `.SRT` sem estourar a memória."
+        "2. **Crie pela IA ou Cole Qualquer Roteiro (Aba 1):** Os prompts travam o figurino fiel à época, o gênero exato dos personagens e a mesma voz adulta do início ao fim.\n"
+        "3. **No Google Flow:** Use o modelo **Veo 3 (com Áudio ligado)**, mantenha a **varinha de Expandir/Reescrever comando DESLIGADA** e dispare pela **Extensão VIP v2.0**!\n"
+        "4. **Montagem Cronológica Exclusiva (Aba 2):** Suba o `.ZIP` na **Aba 2** — o pareamento 1-para-1 coloca cada cena na sua posição exata sem inverter o final com o começo."
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -1163,7 +1225,7 @@ with tab1:
     st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA ou Colar Qualquer Roteiro / Texto Puro")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Título ou Tema Geral do Vídeo (Ajuda o Diretor Visual caso cole texto puro):", placeholder="Ex: A História do Café em Minas / Juiz de Fora vs Uberlândia")
+        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
     with col_t3:
@@ -1179,7 +1241,7 @@ with tab1:
             if not video_title.strip():
                 st.warning("Digite o tema ou situação primeiro.")
             else:
-                with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})..."):
+                with st.spinner(f"Criando roteiro cronológico sem repetições ({total_scenes_calc} cenas)..."):
                     script_out, err_msg = generate_ai_script(
                         video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_short,
                         st.session_state.get("dna_char_a", ""), st.session_state.get("dna_char_b", ""),
@@ -1189,12 +1251,12 @@ with tab1:
                         st.error(err_msg)
                     else:
                         st.session_state["saved_script"] = script_out
-                        st.success("✅ Roteiro gerado com sucesso!")
+                        st.success("✅ Roteiro cronológico gerado com sucesso!")
 
         auto_director_enabled = st.checkbox(
             "🎬 Diretor Visual IA Automático (Cria cenários em inglês p/ texto puro ou traduz `[CENA:]` em português)",
             value=True,
-            help="Se você colar apenas a narração limpa sem [CENA:], ou escrever [CENA:] em português, a IA gera o cenário cinematográfico exato em inglês para cada fatia de 8s."
+            help="Garante figurino fiel à época e gênero explícito em inglês quando você cola texto puro ou escreve [CENA:] em português."
         )
 
     with cs2:
@@ -1225,14 +1287,14 @@ with tab1:
             else:
                 for sc in scenes:
                     if not sc.get("visual"):
-                        sc["visual"] = "Cinematic 4K footage matching the narrated topic in natural daylight, zero text on screen"
+                        sc["visual"] = "Cinematic 4K footage matching the narrated topic with period-accurate wardrobe, zero text on screen"
 
             visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
             lang_en_name = LANGUAGES[selected_lang]["name_en"]
             ref_tag = "Match uploaded reference character image(s). " if has_ref_image else ""
 
             est_mins = round((len(scenes) * 8) / 60.0, 1)
-            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Cenários em Inglês + Áudio travado em {selected_lang}!")
+            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Figurino, Gênero e Idioma travados!")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
@@ -1256,7 +1318,7 @@ with tab1:
                     char_clause = f"Protagonist: {single_dna}. " if single_dna else ""
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {sc['visual']}. People keep mouths closed in silence. "
+                        f"Scene action: {sc['visual']}. Characters keep mouths closed in silence. "
                         f"AUDIO RULE: Silent ambient sound only, zero speech, zero narration, zero music."
                     )
                 else:
@@ -1265,9 +1327,9 @@ with tab1:
                     voice_short = get_compact_voice_profile(voice_choice, custom_voice_timbre)
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {sc['visual']}. Any people on screen keep mouths closed (no lip-sync). "
-                        f"AUDIO RULE (MANDATORY {lang_en_name} SPEECH ONLY, ZERO ENGLISH, no background music): "
-                        f"Off-screen narrator ({voice_short}) speaks in native {lang_en_name}: \"{clean_spoken}\""
+                        f"Scene action: {sc['visual']}. Characters on screen DO NOT speak and keep mouths closed (strictly off-screen studio voiceover). "
+                        f"VOICE & LANGUAGE LOCK (MANDATORY {lang_en_name} ONLY, ZERO ENGLISH, zero music): "
+                        f"{voice_short} narrates in native {lang_en_name}: \"{clean_spoken}\""
                     )
 
                 p_box = re.sub(r'[\r\n]+', ' ', raw_p)
@@ -1283,7 +1345,6 @@ with tab1:
                 st.code(full_txt_joined, language="text")
 
 with tab2:
-    # Limpa automaticamente entregas antigas com mais de 25 minutos no disco temporário
     delivery_root = os.path.join(tempfile.gettempdir(), "estudio_pro_entregas")
     os.makedirs(delivery_root, exist_ok=True)
     now_ts = time.time()
@@ -1295,11 +1356,11 @@ with tab2:
         except Exception:
             pass
 
-    st.subheader(f"Montagem por Voz, Trilha Sonora & Legendas Automáticas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
+    st.subheader(f"Montagem Cronológica 1-para-1, Trilha Sonora & Legendas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para ordenar e gerar a legenda .SRT):", value=st.session_state["saved_script"], height=290)
+        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para o pareamento exclusivo cena-a-cena e legenda .SRT):", value=st.session_state["saved_script"], height=290)
         burn_subs = st.checkbox(
             "💬 Gravar legendas embutidas direto na imagem do vídeo (Recomendado para Shorts/TikTok)",
             value=False,
@@ -1321,13 +1382,16 @@ with tab2:
 
         sort_method = st.radio(
             "Como ordenar os clipes antes de juntar?",
-            ["🗣️ Escutar a fala dos clipes e ordenar pelo roteiro (Automático)", "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos mudos)"]
+            [
+                "🗣️ Pareamento Exclusivo 1-para-1 pela frase inteira do roteiro (Recomendado — Impede inversão)",
+                "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos mudos)"
+            ]
         )
 
-    if st.button("🚀 ORGANIZAR, MIXAR ÁUDIO E ENTREGAR VÍDEO + LEGENDA (.SRT)", type="primary", use_container_width=True):
+    if st.button("🚀 ORGANIZAR NA ORDEM EXATA, MIXAR ÁUDIO E ENTREGAR VÍDEO + .SRT", type="primary", use_container_width=True):
         if not uploaded_files:
             st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4 gerados no Google Flow.")
-        elif "Escutar" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
+        elif "Pareamento" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
             st.error("Cole o roteiro à esquerda (ou mude para ordenar pelo nome dos arquivos se os vídeos forem mudos).")
         else:
             import speech_recognition as sr
@@ -1378,27 +1442,33 @@ with tab2:
                         st.error("Nenhum vídeo .MP4 válido foi encontrado.")
                     else:
                         results = []
-                        p_bar = st.progress(0, text="Analisando cenas...")
+                        p_bar = st.progress(0, text="Transcrevendo cenas...")
                         total = len(mp4_files)
 
-                        if "Escutar" in sort_method:
-                            full_spoken_norm, _ = parse_script_text(roteiro_input, selected_lang)
+                        if "Pareamento" in sort_method:
                             recognizer = sr.Recognizer()
                             temp_wav = os.path.join(work_dir, "_temp.wav")
                             sr_code = LANGUAGES[selected_lang]["sr_code"]
                             for idx, v_path in enumerate(mp4_files, 1):
                                 fn = os.path.basename(v_path)
                                 tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
-                                pos, sc = find_position_in_script(tr, full_spoken_norm, selected_lang)
                                 dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'position': pos, 'duration': dur_c})
-                                p_bar.progress((idx / total) * 0.65, text=f"Escutando cena {idx}/{total}: '{tr[:40]}...'")
-                            results.sort(key=lambda x: (x['position'], x['original_name']))
+                                results.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'duration': dur_c})
+                                p_bar.progress((idx / total) * 0.62, text=f"Escutando cena {idx}/{total}: '{tr[:42]}...'")
+                            p_bar.progress(0.66, text="Alinhando cenas por pareamento exclusivo 1-para-1...")
+                            results = assign_clips_to_scenes_exclusively(results, roteiro_input, selected_lang)
                         else:
                             mp4_files.sort(key=lambda p: os.path.basename(p).lower())
                             for idx, v_path in enumerate(mp4_files, 1):
                                 dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                results.append({'path': v_path, 'original_name': os.path.basename(v_path), 'transcript': '(Ordenado por nome)', 'position': idx, 'duration': dur_c})
+                                results.append({
+                                    'path': v_path,
+                                    'original_name': os.path.basename(v_path),
+                                    'transcript': '(Ordenado por nome)',
+                                    'position': idx,
+                                    'matched_scene_idx': idx - 1,
+                                    'duration': dur_c
+                                })
                                 p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
 
                         srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
@@ -1532,7 +1602,12 @@ with tab2:
                             st.session_state["final_video_disk_path"] = safe_final_path
                             st.session_state["final_srt_text"] = srt_content
                             st.session_state["final_report"] = [
-                                {"original_name": r["original_name"], "transcript": r["transcript"]} for r in results
+                                {
+                                    "original_name": r["original_name"],
+                                    "transcript": r["transcript"],
+                                    "matched_scene": (r.get("matched_scene_idx") + 1) if r.get("matched_scene_idx") is not None else "Extra",
+                                    "score": r.get("match_score", 0)
+                                } for r in results
                             ]
                         else:
                             st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique os vídeos enviados.")
@@ -1543,7 +1618,7 @@ with tab2:
     final_disk_p = st.session_state.get("final_video_disk_path", "")
     if final_disk_p and os.path.exists(final_disk_p):
         size_mb = os.path.getsize(final_disk_p) / (1024 * 1024)
-        st.success(f"✅ VÍDEO FINAL PRONTO PARA DOWNLOAD! ({len(st.session_state.get('final_report', []))} cenas unidas — {size_mb:.1f} MB)")
+        st.success(f"✅ VÍDEO FINAL PRONTO PARA DOWNLOAD! ({len(st.session_state.get('final_report', []))} cenas alinhadas — {size_mb:.1f} MB)")
 
         dl_c1, dl_c2 = st.columns([2, 1])
         with dl_c1:
@@ -1573,15 +1648,15 @@ with tab2:
             if st.checkbox("▶️ Carregar pré-visualização na tela mesmo assim"):
                 st.video(final_disk_p)
 
-        with st.expander("📋 Relatório da Ordem das Cenas"):
+        with st.expander("📋 Relatório do Pareamento Exclusivo Cena-a-Cena"):
             for i, r in enumerate(st.session_state.get("final_report", []), 1):
-                st.write(f"**Cena {i:03d}** (`{r['original_name']}`) — 🗣️ *{r['transcript']}*")
+                st.write(f"**Posição {i:03d}** ➔ Roteiro Cena `{r.get('matched_scene')}` ({r.get('score')}% similaridade) | `{r['original_name']}` — 🗣️ *{r['transcript']}*")
 
 with tab3:
     st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
     st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts.")
 
-    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: Juiz de Fora vs Uberlândia: Qual a Verdadeira Capital do Interior?")
+    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
     seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
 
     if st.button("✨ GERAR TÍTULOS VIRAIS, DESCRIÇÃO COM CAPÍTULOS, TAGS E PROMPT DE CAPA", type="primary", use_container_width=True):
@@ -1591,7 +1666,7 @@ with tab3:
             with st.spinner("Criando estratégia de alto CTR, SEO e prompt da capa..."):
                 combined_dna = (
                     f"Char A: {st.session_state.get('dna_char_a', '')} | Char B: {st.session_state.get('dna_char_b', '')}"
-                    if "Modo 2" in audio_mode else st.session_state.get("dna_single_char", "Cinematic documentary visual")
+                    if "Modo 2" in audio_mode else st.session_state.get("dna_single_char", "Period-accurate cinematic visual")
                 )
                 kit_txt, err_seo = generate_seo_and_thumbnail_kit(
                     seo_topic, seo_script_ref, selected_lang, aspect_ratio, style_choice, combined_dna, active_api_key
@@ -1611,4 +1686,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v2.2 (DIRETOR VISUAL + ANTI-CRASH RAM)
+# FIM DO ARQUIVO SAAS ULTIMATE v2.3 (PAREAMENTO 1-PARA-1 + TRAVA DE EPOCA E GENERO)
