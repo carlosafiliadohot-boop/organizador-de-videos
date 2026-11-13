@@ -2,6 +2,7 @@ import os
 import io
 import re
 import gc
+import json
 import math
 import hmac
 import time
@@ -124,6 +125,7 @@ for k_def, v_def in {
 LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
         "sr_code": "pt-BR",
+        "whisper_code": "pt",
         "name_en": "Brazilian Portuguese (pt-BR)",
         "end_keywords": [
             "grande abraco", "visitaria primeiro", "proximo video", "proximo dossie",
@@ -133,21 +135,25 @@ LANGUAGES = {
     },
     "🇪🇸 Espanhol (Latino/Neutro)": {
         "sr_code": "es-MX",
+        "whisper_code": "es",
         "name_en": "Latin American Spanish (es-419)",
         "end_keywords": ["gran abrazo", "proximo video", "deja tu comentario", "hasta la proxima", "cual elegirias", "suscribete", "comparte"]
     },
     "🇺🇸 Inglês (EUA)": {
         "sr_code": "en-US",
+        "whisper_code": "en",
         "name_en": "American English (en-US)",
         "end_keywords": ["next video", "leave a comment", "let us know in the comments", "thanks for watching", "see you next time", "subscribe", "like and share"]
     },
     "🇫🇷 Francês (França)": {
         "sr_code": "fr-FR",
+        "whisper_code": "fr",
         "name_en": "French (fr-FR)",
         "end_keywords": ["prochaine video", "laissez un commentaire", "a bientot", "merci d avoir regarde", "abonnez vous"]
     },
     "🇮🇹 Italiano (Itália)": {
         "sr_code": "it-IT",
+        "whisper_code": "it",
         "name_en": "Italian (it-IT)",
         "end_keywords": ["prossimo video", "lascia un commento", "a presto", "grazie per aver guardato", "iscriviti"]
     }
@@ -777,6 +783,8 @@ def looks_non_english_visual(text):
     return bool(re.search(pt_markers, text, flags=re.IGNORECASE))
 
 def extract_scenes_for_prompts(raw_script, lang_label):
+    if not raw_script or not raw_script.strip():
+        return []
     pre = re.sub(r'(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', raw_script.strip(), flags=re.IGNORECASE)
     pre = re.sub(
         r'((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)',
@@ -927,6 +935,750 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     return scenes
 # ===================================================================================
 
+# ================= MOTOR LOCAL FFMPEG.WASM NO NAVEGADOR (ZERO UPLOAD / 900MB+) =================
+FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+<meta charset="UTF-8" />
+<title>Estúdio Pro — Montador Local FFmpeg.wasm</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.12.10/dist/umd/ffmpeg.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/@ffmpeg/util@0.12.1/dist/umd/index.js"></script>
+<style>
+  * { box-sizing: border-box; font-family: system-ui, -apple-system, sans-serif; }
+  body { margin: 0; padding: 14px; background: #0f172a; color: #f8fafc; border-radius: 12px; }
+  .card { background: #1e293b; border: 1px solid #334155; border-radius: 12px; padding: 16px; margin-bottom: 12px; }
+  .top-row { display: flex; justify-content: space-between; align-items: center; gap: 10px; flex-wrap: wrap; margin-bottom: 10px; }
+  .badge { background: #065f46; color: #6ee7b7; padding: 4px 10px; border-radius: 999px; font-size: 12px; font-weight: 700; }
+  .grid2 { display: grid; grid-template-columns: 1fr 1fr; gap: 12px; }
+  @media (max-width: 720px) { .grid2 { grid-template-columns: 1fr; } }
+  .dropzone { border: 2px dashed #3b82f6; background: #0f172a; border-radius: 10px; padding: 16px; text-align: center; cursor: pointer; transition: 0.2s; }
+  .dropzone:hover { border-color: #60a5fa; background: #172554; }
+  label.lbl { display: block; font-size: 13px; font-weight: 600; color: #cbd5e1; margin-bottom: 6px; }
+  select, input[type="range"] { width: 100%; padding: 8px; border-radius: 8px; background: #0f172a; color: #fff; border: 1px solid #475569; font-size: 13px; }
+  .chk-row { display: flex; align-items: center; gap: 8px; font-size: 13px; color: #e2e8f0; margin: 7px 0; cursor: pointer; }
+  .btn-main { width: 100%; padding: 13px; border: none; border-radius: 10px; font-size: 15px; font-weight: 700; cursor: pointer; background: linear-gradient(90deg, #2563eb, #1d4ed8); color: #fff; transition: 0.2s; }
+  .btn-main:hover:not(:disabled) { background: linear-gradient(90deg, #1d4ed8, #1e40af); }
+  .btn-main:disabled { opacity: 0.55; cursor: not-allowed; }
+  .btn-sec { background: #334155; color: #f1f5f9; border: 1px solid #475569; border-radius: 8px; padding: 7px 12px; font-size: 12px; font-weight: 600; cursor: pointer; }
+  .btn-sec:hover { background: #475569; }
+  .prog-wrap { background: #0f172a; border-radius: 999px; height: 12px; overflow: hidden; margin: 10px 0 6px; border: 1px solid #334155; display: none; }
+  .prog-bar { background: linear-gradient(90deg, #10b981, #3b82f6); height: 100%; width: 0%; transition: width 0.25s; }
+  .status-txt { font-size: 13px; color: #93c5fd; min-height: 20px; margin-bottom: 6px; }
+  .dl-box { display: none; background: #064e3b; border: 1px solid #10b981; border-radius: 10px; padding: 14px; margin-top: 12px; }
+  .dl-grid { display: grid; grid-template-columns: 2fr 1fr; gap: 10px; margin-top: 10px; }
+  .dl-btn { display: block; text-align: center; padding: 12px; border-radius: 8px; font-weight: 700; text-decoration: none; font-size: 14px; }
+  .dl-mp4 { background: #10b981; color: #052e16; }
+  .dl-srt { background: #0f172a; color: #f8fafc; border: 1px solid #34d399; }
+  .log-box { max-height: 190px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #94a3b8; margin-top: 10px; display: none; }
+</style>
+</head>
+<body>
+
+<div class="card">
+  <div class="top-row">
+    <div>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm (Zero Upload p/ Servidor)</strong>
+      <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
+        Lê pacotes de <b>900 MB, 1.5 GB ou mais</b> direto do seu computador — sem limite de nuvem!
+        Roteiro carregado: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
+      </div>
+    </div>
+    <div style="display:flex;gap:8px;align-items:center;">
+      <span class="badge">100% RAM Local</span>
+      <button class="btn-sec" id="open-tab-btn" title="Abre este montador numa aba exclusiva com o máximo de memória RAM do navegador">🖥️ Abrir em Aba Dedicada (+RAM)</button>
+    </div>
+  </div>
+
+  <div class="grid2">
+    <div>
+      <label class="lbl">📦 1. Selecione o .ZIP gigante (0.9GB+) ou vários .MP4:</label>
+      <div class="dropzone" onclick="document.getElementById('inp-videos').click()">
+        <input type="file" id="inp-videos" multiple accept=".zip,.mp4,video/mp4,application/zip" style="display:none" />
+        <div id="vid-file-label" style="font-size:13px;color:#93c5fd;font-weight:600;">
+          Clique aqui para escolher o .ZIP ou todos os .MP4<br/>
+          <span style="font-size:11px;color:#64748b;font-weight:400;">Processamento instantâneo direto no disco/navegador (0 bytes enviados)</span>
+        </div>
+      </div>
+
+      <div class="grid2" style="margin-top:10px;">
+        <div>
+          <label class="lbl">🎙️ 2A. Trocar Locução (Opcional):</label>
+          <input type="file" id="inp-voice" accept="audio/*" style="font-size:11.5px;width:100%;color:#cbd5e1;" />
+        </div>
+        <div>
+          <label class="lbl">🎵 2B. Música de Fundo (Opcional):</label>
+          <input type="file" id="inp-bgm" accept="audio/*" style="font-size:11.5px;width:100%;color:#cbd5e1;" />
+        </div>
+      </div>
+      <div id="bgm-vol-wrap" style="margin-top:8px;display:none;">
+        <label class="lbl">🔉 Volume da Música de Fundo: <span id="bgm-vol-val">12</span>%</label>
+        <input type="range" id="inp-bgm-vol" min="3" max="40" value="12" oninput="document.getElementById('bgm-vol-val').innerText=this.value" />
+      </div>
+    </div>
+
+    <div>
+      <label class="lbl">🧭 3. Como ordenar e filtrar os clipes no navegador?</label>
+      <select id="sel-sort">
+        <option value="whisper">🗣️ Pareamento IA por Voz (Groq Whisper em Lotes + Exclusivo 1-para-1)</option>
+        <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome + Filtro Anti-Mudos Instantâneo</option>
+        <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes (Para vídeos intencionalmente mudos)</option>
+      </select>
+
+      <label class="chk-row" style="margin-top:10px;">
+        <input type="checkbox" id="chk-drop-muted" checked />
+        <span>🧹 Descartar automaticamente clipes mudos ou takes extras repetidos</span>
+      </label>
+
+      <label class="chk-row">
+        <input type="checkbox" id="chk-fast-copy" checked />
+        <span>⚡ União Instantânea <code>-c copy</code> (Junta em ~8 segundos sem recodificar!)</span>
+      </label>
+
+      <div style="font-size:11.5px;color:#94a3b8;background:#0f172a;padding:8px 10px;border-radius:8px;border:1px solid #334155;margin-top:8px;">
+        💡 <b>Dica:</b> No modo <code>-c copy</code>, até 90 cenas são coladas em segundos mantendo 100% da qualidade original do Google Flow. Se o pacote limpo passar de 780 MB, o motor divide em sub-lotes seguros automaticamente para não estourar a memória da aba!
+      </div>
+    </div>
+  </div>
+
+  <div style="margin-top:14px;">
+    <button class="btn-main" id="btn-run">🚀 MONTAR VÍDEO COMPLETO AGORA NO NAVEGADOR (ZERO UPLOAD)</button>
+  </div>
+
+  <div class="prog-wrap" id="prog-wrap"><div class="prog-bar" id="prog-bar"></div></div>
+  <div class="status-txt" id="status-txt"></div>
+
+  <div class="dl-box" id="dl-box">
+    <div id="dl-summary" style="font-weight:700;color:#6ee7b7;font-size:14px;"></div>
+    <div id="dl-missing" style="font-size:12px;color:#fde68a;margin-top:4px;"></div>
+    <div class="dl-grid">
+      <a id="dl-mp4-link" class="dl-btn dl-mp4" href="#" download="VIDEO_FINAL_COMPLETO.mp4">💾 BAIXAR VÍDEO COMPLETO (.MP4)</a>
+      <a id="dl-srt-link" class="dl-btn dl-srt" href="#" download="Legenda_Sincronizada.srt">📝 BAIXAR LEGENDA (.SRT)</a>
+    </div>
+    <video id="preview-vid" controls style="width:100%;max-height:300px;margin-top:12px;border-radius:8px;background:#000;display:none;"></video>
+  </div>
+
+  <div class="log-box" id="log-box"></div>
+</div>
+
+<script>
+const CONFIG = __CONFIG_JSON__;
+document.getElementById("sc-count-lbl").innerText = CONFIG.scenes.length + " cenas";
+
+document.getElementById("inp-bgm").addEventListener("change", (e) => {
+  document.getElementById("bgm-vol-wrap").style.display = e.target.files.length ? "block" : "none";
+});
+
+document.getElementById("inp-videos").addEventListener("change", (e) => {
+  const files = [...e.target.files];
+  if (!files.length) return;
+  const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
+  document.getElementById("vid-file-label").innerHTML =
+    `✅ <b>${files.length} arquivo(s) selecionado(s) (${totalMB} MB totais)</b><br/><span style="font-size:11px;color:#34d399;">Pronto para processar localmente sem upload!</span>`;
+});
+
+document.getElementById("open-tab-btn").addEventListener("click", () => {
+  const htmlFull = document.documentElement.outerHTML;
+  const blob = new Blob([htmlFull], { type: "text/html;charset=utf-8" });
+  const url = URL.createObjectURL(blob);
+  window.open(url, "_blank");
+});
+
+function logMsg(msg) {
+  const lb = document.getElementById("log-box");
+  lb.style.display = "block";
+  const div = document.createElement("div");
+  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
+  lb.appendChild(div);
+  lb.scrollTop = lb.scrollHeight;
+}
+
+function setProgress(pct, text) {
+  document.getElementById("prog-wrap").style.display = "block";
+  document.getElementById("prog-bar").style.width = Math.min(100, Math.max(0, pct)) + "%";
+  document.getElementById("status-txt").innerText = text;
+}
+
+function normalizeText(str) {
+  if (!str) return "";
+  return str.toLowerCase()
+    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
+    .replace(/[^a-z0-9\s]/g, " ")
+    .replace(/\s+/g, " ").trim();
+}
+
+function levenshteinRatio(a, b) {
+  if (!a && !b) return 100;
+  if (!a || !b) return 0;
+  const m = a.length, n = b.length;
+  const dp = new Uint16Array(n + 1);
+  for (let j = 0; j <= n; j++) dp[j] = j;
+  for (let i = 1; i <= m; i++) {
+    let prev = dp[0];
+    dp[0] = i;
+    for (let j = 1; j <= n; j++) {
+      const temp = dp[j];
+      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
+      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
+      prev = temp;
+    }
+  }
+  return ((m + n - dp[n]) / (m + n)) * 100;
+}
+
+function tokenSortRatio(a, b) {
+  const sa = a.split(" ").filter(Boolean).sort().join(" ");
+  const sb = b.split(" ").filter(Boolean).sort().join(" ");
+  return levenshteinRatio(sa, sb);
+}
+
+function encodeMonoWav12k(int16Samples, sampleRate) {
+  const buffer = new ArrayBuffer(44 + int16Samples.length * 2);
+  const view = new DataView(buffer);
+  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
+  writeStr(0, "RIFF");
+  view.setUint32(4, 36 + int16Samples.length * 2, true);
+  writeStr(8, "WAVE");
+  writeStr(12, "fmt ");
+  view.setUint32(16, 16, true);
+  view.setUint16(20, 1, true);
+  view.setUint16(22, 1, true);
+  view.setUint32(24, sampleRate, true);
+  view.setUint32(28, sampleRate * 2, true);
+  view.setUint16(32, 2, true);
+  view.setUint16(34, 16, true);
+  writeStr(36, "data");
+  view.setUint32(40, int16Samples.length * 2, true);
+  let offset = 44;
+  for (let i = 0; i < int16Samples.length; i++, offset += 2) {
+    view.setInt16(offset, int16Samples[i], true);
+  }
+  return new Blob([buffer], { type: "audio/wav" });
+}
+
+function formatSrtTime(secFloat) {
+  const ms = Math.round((secFloat - Math.floor(secFloat)) * 1000);
+  const sInt = Math.floor(secFloat);
+  const hrs = Math.floor(sInt / 3600);
+  const mins = Math.floor((sInt % 3600) / 60);
+  const secs = sInt % 60;
+  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
+}
+
+function buildSrt(orderedItems, scenes) {
+  let curr = 0.0, idx = 1;
+  const blocks = [];
+  for (let i = 0; i < orderedItems.length; i++) {
+    const it = orderedItems[i];
+    const dur = it.duration > 0.5 ? it.duration : 8.0;
+    let txt = "";
+    if (it.matchedSceneIdx !== null && scenes[it.matchedSceneIdx] && scenes[it.matchedSceneIdx].spoken) {
+      txt = scenes[it.matchedSceneIdx].spoken;
+    } else if (it.transcript && !it.transcript.startsWith("(")) {
+      txt = it.transcript;
+    } else if (i < scenes.length && scenes[i].spoken) {
+      txt = scenes[i].spoken;
+    }
+    if (txt) {
+      const words = txt.split(/\s+/);
+      if (words.length > 9) {
+        const mid = Math.floor(words.length / 2);
+        const p1 = words.slice(0, mid).join(" ");
+        const p2 = words.slice(mid).join(" ");
+        const half = dur / 2.0;
+        blocks.push(`${idx++}\n${formatSrtTime(curr)} --> ${formatSrtTime(curr + half - 0.08)}\n${p1}\n`);
+        blocks.push(`${idx++}\n${formatSrtTime(curr + half)} --> ${formatSrtTime(curr + dur - 0.12)}\n${p2}\n`);
+      } else {
+        blocks.push(`${idx++}\n${formatSrtTime(curr)} --> ${formatSrtTime(curr + dur - 0.12)}\n${txt}\n`);
+      }
+    }
+    curr += dur;
+  }
+  return blocks.join("\n");
+}
+
+function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
+  const numScenes = scenes.length;
+  if (!numScenes) {
+    const kept = clips.filter(c => !dropUnmatched || !c.isMuted);
+    kept.sort((a, b) => a.dateMs - b.dateMs || a.name.localeCompare(b.name, undefined, { numeric: true }));
+    kept.forEach((c, idx) => { c.matchedSceneIdx = null; c.score = 100; });
+    return { kept, discardedCount: clips.length - kept.length, missingScenes: [] };
+  }
+
+  const sceneNorms = scenes.map(s => normalizeText(s.spoken || ""));
+  const wordFreq = {};
+  const sceneWordSets = sceneNorms.map(sn => {
+    const ws = new Set(sn.split(" ").filter(w => w.length >= 4));
+    ws.forEach(w => { wordFreq[w] = (wordFreq[w] || 0) + 1; });
+    return ws;
+  });
+
+  const pairs = [];
+  clips.forEach((clip, cIdx) => {
+    if (clip.isMuted) return;
+    const tNorm = normalizeText(clip.transcript || "");
+    if (!tNorm || tNorm.length < 4) return;
+    const tWords = new Set(tNorm.split(" ").filter(w => w.length >= 4));
+    const hasEndKw = endKeywords.some(kw => tNorm.includes(kw));
+
+    sceneNorms.forEach((sNorm, sIdx) => {
+      if (!sNorm) return;
+      const rFull = levenshteinRatio(tNorm, sNorm);
+      const rSort = tokenSortRatio(tNorm, sNorm);
+      let score = (rFull * 0.55) + (rSort * 0.45);
+
+      let rareBonus = 0;
+      tWords.forEach(w => {
+        if (sceneWordSets[sIdx].has(w)) {
+          if (wordFreq[w] === 1) rareBonus += 8.0;
+          else if (wordFreq[w] === 2) rareBonus += 3.5;
+        }
+      });
+      score = Math.min(100, score + Math.min(24, rareBonus));
+      if (hasEndKw && sIdx === numScenes - 1) score = Math.min(100, score + 18);
+      else if (hasEndKw && sIdx < numScenes - 2) score -= 20;
+
+      pairs.push({ score, cIdx, sIdx });
+    });
+  });
+
+  pairs.sort((a, b) => b.score - a.score);
+  const assigned = new Map();
+  const usedScenes = new Set();
+
+  for (const p of pairs) {
+    if (p.score < 36.0) break;
+    if (!assigned.has(p.cIdx) && !usedScenes.has(p.sIdx)) {
+      assigned.set(p.cIdx, p);
+      usedScenes.add(p.sIdx);
+    }
+  }
+
+  const kept = [];
+  let discardedCount = 0;
+  clips.forEach((clip, cIdx) => {
+    if (assigned.has(cIdx)) {
+      const m = assigned.get(cIdx);
+      clip.position = m.sIdx;
+      clip.matchedSceneIdx = m.sIdx;
+      clip.score = Math.round(m.score * 10) / 10;
+      kept.push(clip);
+    } else if (!dropUnmatched && !clip.isMuted) {
+      clip.position = 99999 + cIdx;
+      clip.matchedSceneIdx = null;
+      clip.score = 0;
+      kept.push(clip);
+    } else {
+      discardedCount++;
+    }
+  });
+
+  kept.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, undefined, { numeric: true }));
+  const missingScenes = [];
+  for (let i = 0; i < numScenes; i++) {
+    if (!usedScenes.has(i)) missingScenes.push(i + 1);
+  }
+  return { kept, discardedCount, missingScenes };
+}
+
+async function initFFmpegInstance() {
+  const { FFmpeg } = window.FFmpegWASM;
+  const { toBlobURL } = window.FFmpegUtil;
+  const ffmpeg = new FFmpeg();
+  ffmpeg.on("log", ({ message }) => {
+    if (message && !message.startsWith("frame=")) logMsg(message);
+  });
+
+  const cdns = [
+    "https://cdn.jsdelivr.net/npm",
+    "https://unpkg.com"
+  ];
+  let lastErr = null;
+  for (const base of cdns) {
+    try {
+      const workerResp = await fetch(`${base}/@ffmpeg/ffmpeg@0.12.10/dist/umd/814.ffmpeg.js`);
+      const workerTxt = await workerResp.text();
+      const workerBlobUrl = URL.createObjectURL(new Blob([workerTxt], { type: "text/javascript" }));
+      const coreURL = await toBlobURL(`${base}/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.js`, "text/javascript");
+      const wasmURL = await toBlobURL(`${base}/@ffmpeg/core@0.12.6/dist/umd/ffmpeg-core.wasm`, "application/wasm");
+      await ffmpeg.load({ classWorkerURL: workerBlobUrl, coreURL, wasmURL });
+      return ffmpeg;
+    } catch (err) {
+      lastErr = err;
+    }
+  }
+  throw new Error("Falha ao iniciar FFmpeg.wasm: " + (lastErr ? lastErr.message : "Verifique sua conexão."));
+}
+
+async function transcribeBatchGroq(wavBlob, apiKey, langCode) {
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const fd = new FormData();
+    fd.append("file", wavBlob, "batch.wav");
+    fd.append("model", "whisper-large-v3-turbo");
+    fd.append("language", langCode);
+    fd.append("response_format", "verbose_json");
+    fd.append("timestamp_granularities[]", "word");
+    fd.append("timestamp_granularities[]", "segment");
+
+    const resp = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
+      method: "POST",
+      headers: { "Authorization": `Bearer ${apiKey}` },
+      body: fd
+    });
+    if (resp.status === 200) {
+      return await resp.json();
+    }
+    if (resp.status === 429) {
+      logMsg("⏳ Aguardando 6s para respeitar limite gratuito da API Whisper...");
+      await sleep(6000);
+      continue;
+    }
+    const errTxt = await resp.text();
+    throw new Error(`Whisper HTTP ${resp.status}: ${errTxt.slice(0, 120)}`);
+  }
+  throw new Error("Limite temporário atingido na API Whisper.");
+}
+
+document.getElementById("btn-run").addEventListener("click", async () => {
+  const rawFiles = [...document.getElementById("inp-videos").files];
+  if (!rawFiles.length) {
+    alert("⚠️ Selecione primeiro o arquivo .ZIP ou os vídeos .MP4!");
+    return;
+  }
+
+  const sortMode = document.getElementById("sel-sort").value;
+  const dropMuted = document.getElementById("chk-drop-muted").checked;
+  const fastCopy = document.getElementById("chk-fast-copy").checked;
+  const voiceFile = document.getElementById("inp-voice").files[0] || null;
+  const bgmFile = document.getElementById("inp-bgm").files[0] || null;
+  const bgmVol = parseInt(document.getElementById("inp-bgm-vol").value || "12", 10) / 100.0;
+
+  const btn = document.getElementById("btn-run");
+  btn.disabled = true;
+  document.getElementById("dl-box").style.display = "none";
+  document.getElementById("log-box").innerHTML = "";
+
+  try {
+    setProgress(3, "📂 Lendo lista de vídeos localmente na memória do seu computador...");
+    const clipEntries = [];
+
+    for (const f of rawFiles) {
+      if (f.name.toLowerCase().endsWith(".zip")) {
+        logMsg(`Abrindo pacote local ${f.name} (${(f.size / 1048576).toFixed(1)} MB)...`);
+        const zip = await JSZip.loadAsync(f);
+        const names = Object.keys(zip.files);
+        for (const path of names) {
+          const zObj = zip.files[path];
+          if (!zObj.dir && path.toLowerCase().endsWith(".mp4") && !path.startsWith("__MACOSX")) {
+            const baseName = path.split("/").pop();
+            if (baseName && !baseName.startsWith("._")) {
+              clipEntries.push({
+                name: baseName,
+                dateMs: zObj.date ? zObj.date.getTime() : 0,
+                getUint8: async () => await zObj.async("uint8array"),
+                sizeHint: zObj._data && zObj._data.uncompressedSize ? zObj._data.uncompressedSize : 0
+              });
+            }
+          }
+        }
+      } else if (f.name.toLowerCase().endsWith(".mp4")) {
+        clipEntries.push({
+          name: f.name,
+          dateMs: f.lastModified || 0,
+          getUint8: async () => new Uint8Array(await f.arrayBuffer()),
+          sizeHint: f.size
+        });
+      }
+    }
+
+    if (!clipEntries.length) {
+      throw new Error("Nenhum vídeo .MP4 válido encontrado dentro da seleção!");
+    }
+    logMsg(`✅ ${clipEntries.length} clipes .MP4 localizados localmente!`);
+
+    const needAudioCheck = (dropMuted && sortMode !== "alpha") || (sortMode === "whisper");
+    const sampleRateTarget = 12000;
+    const slotSeconds = 10;
+    const pcm12kPerClip = new Array(clipEntries.length).fill(null);
+
+    if (needAudioCheck) {
+      const AudioCtx = window.AudioContext || window.webkitAudioContext;
+      const actx = new AudioCtx();
+      try {
+        for (let i = 0; i < clipEntries.length; i++) {
+          setProgress(5 + ((i + 1) / clipEntries.length) * 28, `🎧 Analisando áudio local do clipe ${i + 1}/${clipEntries.length} (${clipEntries[i].name})...`);
+          const bytes = await clipEntries[i].getUint8();
+          clipEntries[i].byteLength = bytes.byteLength;
+          try {
+            const abuf = await actx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
+            clipEntries[i].duration = abuf.duration || 8.0;
+            const ch0 = abuf.getChannelData(0);
+            let sumSq = 0;
+            const stepRms = Math.max(1, Math.floor(ch0.length / 8000));
+            let countRms = 0;
+            for (let k = 0; k < ch0.length; k += stepRms) {
+              sumSq += ch0[k] * ch0[k];
+              countRms++;
+            }
+            const rms = Math.sqrt(sumSq / Math.max(1, countRms));
+            clipEntries[i].isMuted = (rms < 0.0045);
+
+            if (!clipEntries[i].isMuted && sortMode === "whisper") {
+              const ratio = abuf.sampleRate / sampleRateTarget;
+              const maxSamples = Math.min(Math.floor(ch0.length / ratio), Math.floor(sampleRateTarget * 8.5));
+              const down = new Int16Array(maxSamples);
+              for (let s = 0; s < maxSamples; s++) {
+                const v = Math.max(-1, Math.min(1, ch0[Math.floor(s * ratio)]));
+                down[s] = v < 0 ? v * 0x8000 : v * 0x7FFF;
+              }
+              pcm12kPerClip[i] = down;
+            }
+          } catch (decErr) {
+            clipEntries[i].duration = 8.0;
+            clipEntries[i].isMuted = true;
+          }
+        }
+      } finally {
+        try { await actx.close(); } catch (e) {}
+      }
+    } else {
+      clipEntries.forEach(c => { c.duration = 8.0; c.isMuted = false; });
+    }
+
+    let orderedClips = [];
+    let discardedCount = 0;
+    let missingScenes = [];
+
+    const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && CONFIG.scenes.length > 0;
+
+    if (sortMode === "whisper" && !canUseWhisper) {
+      logMsg("⚠️ Sem chave Groq gsk_ ou sem roteiro na Aba 2 — alinhando automaticamente pela ordem de criação + filtro anti-mudos.");
+    }
+
+    if (canUseWhisper) {
+      const speakableIndices = [];
+      clipEntries.forEach((c, idx) => { if (!c.isMuted && pcm12kPerClip[idx]) speakableIndices.push(idx); });
+      logMsg(`🗣️ Transcrevendo ${speakableIndices.length} clipes com voz em lotes rápidos via Whisper Turbo...`);
+
+      const batchSize = 8;
+      const totalBatches = Math.ceil(speakableIndices.length / batchSize);
+
+      for (let b = 0; b < totalBatches; b++) {
+        const sliceIdxs = speakableIndices.slice(b * batchSize, (b + 1) * batchSize);
+        setProgress(34 + ((b + 1) / Math.max(1, totalBatches)) * 26, `🧠 Pareando falas IA (Lote ${b + 1}/${totalBatches})...`);
+
+        const totalSlotSamples = sliceIdxs.length * slotSeconds * sampleRateTarget;
+        const batchPcm = new Int16Array(totalSlotSamples);
+        sliceIdxs.forEach((origIdx, slotPos) => {
+          batchPcm.set(pcm12kPerClip[origIdx], slotPos * slotSeconds * sampleRateTarget);
+          pcm12kPerClip[origIdx] = null; // libera RAM imediatamente
+        });
+
+        const wavBlob = encodeMonoWav12k(batchPcm, sampleRateTarget);
+        const wData = await transcribeBatchGroq(wavBlob, CONFIG.groqKey, CONFIG.whisperLang);
+        const buckets = Array.from({ length: sliceIdxs.length }, () => []);
+
+        if (wData.words && wData.words.length > 0) {
+          for (const w of wData.words) {
+            const mid = ((w.start || 0) + (w.end || w.start || 0)) / 2.0;
+            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor(mid / slotSeconds)));
+            buckets[sPos].push(w.word);
+          }
+        } else if (wData.segments && wData.segments.length > 0) {
+          for (const seg of wData.segments) {
+            const mid = ((seg.start || 0) + (seg.end || seg.start || 0)) / 2.0;
+            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor(mid / slotSeconds)));
+            buckets[sPos].push(seg.text);
+          }
+        }
+
+        sliceIdxs.forEach((origIdx, slotPos) => {
+          clipEntries[origIdx].transcript = buckets[slotPos].join(" ").replace(/\s+/g, " ").trim();
+          if (!clipEntries[origIdx].transcript) clipEntries[origIdx].isMuted = true;
+        });
+      }
+
+      const matchRes = assignClipsExclusivelyJS(clipEntries, CONFIG.scenes, CONFIG.endKeywords, dropMuted);
+      orderedClips = matchRes.kept;
+      discardedCount = matchRes.discardedCount;
+      missingScenes = matchRes.missingScenes;
+
+      if (!orderedClips.length && clipEntries.length) {
+        logMsg("⚠️ Nenhum pareamento atingiu nota mínima; mantendo clipes com som na ordem original.");
+        orderedClips = clipEntries.filter(c => !c.isMuted);
+        if (!orderedClips.length) orderedClips = clipEntries;
+      }
+    } else if (sortMode === "chron_flow" || (sortMode === "whisper" && !canUseWhisper)) {
+      orderedClips = clipEntries.filter(c => !dropMuted || !c.isMuted);
+      discardedCount = clipEntries.length - orderedClips.length;
+      orderedClips.sort((a, b) => (a.dateMs - b.dateMs) || a.name.localeCompare(b.name, undefined, { numeric: true }));
+      orderedClips.forEach((c, idx) => {
+        c.matchedSceneIdx = idx < CONFIG.scenes.length ? idx : null;
+        c.transcript = "(Ordem cronológica do pacote)";
+        c.score = 100;
+      });
+    } else {
+      orderedClips = [...clipEntries];
+      orderedClips.sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
+      orderedClips.forEach((c, idx) => {
+        c.matchedSceneIdx = idx < CONFIG.scenes.length ? idx : null;
+        c.transcript = "(Ordem alfabética)";
+        c.score = 100;
+      });
+    }
+
+    setProgress(63, "⚙️ Carregando motor FFmpeg.wasm no seu navegador...");
+    const ffmpeg = await initFFmpegInstance();
+
+    const totalKeptMB = orderedClips.reduce((acc, c) => acc + (c.byteLength || c.sizeHint || 0), 0) / 1048576;
+    const useSafeSubBatches = (!fastCopy) || (totalKeptMB > 760);
+
+    let currentMainFile = "joined_base.mp4";
+
+    if (!useSafeSubBatches) {
+      const concatLines = [];
+      for (let i = 0; i < orderedClips.length; i++) {
+        setProgress(66 + ((i + 1) / orderedClips.length) * 18, `📥 Preparando cena ${i + 1}/${orderedClips.length} na memória local...`);
+        const vName = `c_${String(i).padStart(4, "0")}.mp4`;
+        const dataU8 = await orderedClips[i].getUint8();
+        await ffmpeg.writeFile(vName, dataU8);
+        concatLines.push(`file '${vName}'`);
+      }
+      await ffmpeg.writeFile("list.txt", new TextEncoder().encode(concatLines.join("\n")));
+      setProgress(86, "⚡ Colando todas as cenas em alta velocidade (-c copy)...");
+      await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "list.txt", "-c", "copy", "-movflags", "+faststart", currentMainFile]);
+
+      for (let i = 0; i < orderedClips.length; i++) {
+        try { await ffmpeg.deleteFile(`c_${String(i).padStart(4, "0")}.mp4`); } catch (e) {}
+      }
+      try { await ffmpeg.deleteFile("list.txt"); } catch (e) {}
+    } else {
+      // Sub-lotes com compactação leve para pacotes gigantes (> 760 MB) nunca estourarem o limite de 2GB do WebAssembly!
+      const subSize = 20;
+      const numSubs = Math.ceil(orderedClips.length / subSize);
+      const partFiles = [];
+      logMsg(`🛡️ Modo Anti-Limite ativo (${totalKeptMB.toFixed(0)} MB): processando em ${numSubs} sub-lotes leves...`);
+
+      for (let sb = 0; sb < numSubs; sb++) {
+        const subSlice = orderedClips.slice(sb * subSize, (sb + 1) * subSize);
+        const subLines = [];
+        for (let k = 0; k < subSlice.length; k++) {
+          const fn = `s_${k}.mp4`;
+          await ffmpeg.writeFile(fn, await subSlice[k].getUint8());
+          subLines.push(`file '${fn}'`);
+        }
+        await ffmpeg.writeFile("sub.txt", new TextEncoder().encode(subLines.join("\n")));
+        const rawSub = `raw_sub_${sb}.mp4`;
+        const compSub = `part_${sb}.mp4`;
+        setProgress(66 + ((sb + 1) / numSubs) * 20, `🗜️ Otimizando sub-lote ${sb + 1}/${numSubs} para blindar memória...`);
+        await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "sub.txt", "-c", "copy", rawSub]);
+        for (let k = 0; k < subSlice.length; k++) {
+          try { await ffmpeg.deleteFile(`s_${k}.mp4`); } catch (e) {}
+        }
+        await ffmpeg.exec(["-i", rawSub, "-c:v", "libx264", "-preset", "ultrafast", "-crf", "25", "-c:a", "aac", "-b:a", "128k", compSub]);
+        try { await ffmpeg.deleteFile(rawSub); } catch (e) {}
+        partFiles.push(`file '${compSub}'`);
+      }
+      await ffmpeg.writeFile("parts.txt", new TextEncoder().encode(partFiles.join("\n")));
+      await ffmpeg.exec(["-f", "concat", "-safe", "0", "-i", "parts.txt", "-c", "copy", "-movflags", "+faststart", currentMainFile]);
+      for (let sb = 0; sb < numSubs; sb++) {
+        try { await ffmpeg.deleteFile(`part_${sb}.mp4`); } catch (e) {}
+      }
+    }
+
+    if (voiceFile) {
+      setProgress(91, "🎙️ Aplicando sua locução principal...");
+      const vExt = voiceFile.name.split(".").pop() || "mp3";
+      const vInput = `voice_in.${vExt}`;
+      await ffmpeg.writeFile(vInput, new Uint8Array(await voiceFile.arrayBuffer()));
+      await ffmpeg.exec(["-i", currentMainFile, "-i", vInput, "-map", "0:v:0", "-map", "1:a:0", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "-movflags", "+faststart", "voiced.mp4"]);
+      try { await ffmpeg.deleteFile(currentMainFile); await ffmpeg.deleteFile(vInput); } catch (e) {}
+      currentMainFile = "voiced.mp4";
+    }
+
+    if (bgmFile) {
+      setProgress(95, "🎵 Mixando música de fundo...");
+      const bExt = bgmFile.name.split(".").pop() || "mp3";
+      const bInput = `bgm_in.${bExt}`;
+      await ffmpeg.writeFile(bInput, new Uint8Array(await bgmFile.arrayBuffer()));
+      await ffmpeg.exec([
+        "-i", currentMainFile, "-stream_loop", "-1", "-i", bInput,
+        "-filter_complex", `[1:a]volume=${bgmVol.toFixed(3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
+        "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-movflags", "+faststart", "with_bgm.mp4"
+      ]);
+      try { await ffmpeg.deleteFile(currentMainFile); await ffmpeg.deleteFile(bInput); } catch (e) {}
+      currentMainFile = "with_bgm.mp4";
+    }
+
+    setProgress(98, "💾 Gerando arquivo final para download imediato...");
+    const finalData = await ffmpeg.readFile(currentMainFile);
+    const mp4Blob = new Blob([finalData.buffer], { type: "video/mp4" });
+    try { await ffmpeg.deleteFile(currentMainFile); ffmpeg.terminate(); } catch (e) {}
+
+    const mp4Url = URL.createObjectURL(mp4Blob);
+    const srtText = buildSrt(orderedClips, CONFIG.scenes);
+    const srtBlob = new Blob([srtText], { type: "text/plain;charset=utf-8" });
+    const srtUrl = URL.createObjectURL(srtBlob);
+
+    const finalMB = (mp4Blob.size / 1048576).toFixed(1);
+    setProgress(100, "🎉 Concluído 100% no seu navegador (Zero uso do servidor)!");
+
+    const dlBox = document.getElementById("dl-box");
+    dlBox.style.display = "block";
+    document.getElementById("dl-summary").innerText =
+      `✅ VÍDEO PRONTO! ${orderedClips.length} cenas unidas (${finalMB} MB)` +
+      (discardedCount > 0 ? ` | 🧹 ${discardedCount} clipe(s) mudo(s)/repetido(s) removido(s)!` : "");
+
+    document.getElementById("dl-missing").innerText = missingScenes.length
+      ? `💡 Cenas do roteiro que vieram mudas do Flow e foram omitidas: Cena(s) ${missingScenes.join(", ")}.`
+      : "";
+
+    const mp4Link = document.getElementById("dl-mp4-link");
+    mp4Link.href = mp4Url;
+    mp4Link.innerText = `💾 BAIXAR VÍDEO COMPLETO (${finalMB} MB .MP4)`;
+
+    document.getElementById("dl-srt-link").href = srtUrl;
+
+    const vidPreview = document.getElementById("preview-vid");
+    if (mp4Blob.size <= 350 * 1048576) {
+      vidPreview.src = mp4Url;
+      vidPreview.style.display = "block";
+    }
+
+    orderedClips.forEach((c, idx) => {
+      logMsg(`Posição ${String(idx + 1).padStart(3, "0")} -> Cena ${c.matchedSceneIdx !== null ? c.matchedSceneIdx + 1 : "Extra"} (${c.score}%) | ${c.name} | "${(c.transcript || "").slice(0, 55)}"`);
+    });
+
+  } catch (err) {
+    console.error(err);
+    setProgress(0, "❌ Erro: " + err.message);
+    logMsg("ERRO: " + err.message);
+  } finally {
+    btn.disabled = false;
+  }
+});
+</script>
+</body>
+</html>
+"""
+
+def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertical):
+    scenes_parsed = extract_scenes_for_prompts(raw_script, lang_label)
+    js_scenes = [{"spoken": sc.get("spoken", "")} for sc in scenes_parsed if sc.get("spoken")]
+    cfg = {
+        "scenes": js_scenes,
+        "groqKey": groq_api_key if (groq_api_key and groq_api_key.startswith("gsk_")) else "",
+        "whisperLang": LANGUAGES[lang_label]["whisper_code"],
+        "endKeywords": LANGUAGES[lang_label]["end_keywords"],
+        "isVertical": is_vertical
+    }
+    safe_json = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
+    html_out = FFMPEG_WASM_HTML_TEMPLATE.replace("__CONFIG_JSON__", safe_json)
+    components.html(html_out, height=740, scrolling=True)
+# ===============================================================================================
+
 def format_srt_timestamp(seconds_float):
     ms = int(round((seconds_float - int(seconds_float)) * 1000))
     s_int = int(seconds_float)
@@ -1004,7 +1756,6 @@ def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpe
             continue
     return ""
 
-# ======= PAREAMENTO CRONOLÓGICO + DESCARTE DE MUDOS E TAKES EXTRAS =======
 def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_unmatched=True):
     from rapidfuzz import fuzz
     from collections import Counter
@@ -1100,13 +1851,12 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
     missing_scene_numbers = [idx + 1 for idx in range(num_scenes) if idx not in used_scenes]
 
     return kept_clips, discarded_clips, missing_scene_numbers
-# ==============================================================================
 
 # ================= TOPO DO ESTÚDIO & VÍDEO TUTORIAL =================
 is_admin = (st.session_state.get("user_role") == "admin")
 col_hdr1, col_hdr2 = st.columns([5, 1])
 with col_hdr1:
-    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, Roteiros, Legendas & SEO")
+    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm Local & SEO")
 with col_hdr2:
     st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
     if st.button("🔒 Sair", use_container_width=True):
@@ -1120,14 +1870,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar vídeos curtos ou longos (11+ min) sem estourar a RAM"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (900MB+ / 12+ min) sem limite de servidor"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
-        "2. **Auto-DNA de Elenco (Aba 1):** Mesmo sem subir foto, o sistema trava automaticamente o cabelo, rosto e roupa de personagens recorrentes em todas as cenas!\n"
-        "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** (evita takes duplicados), desligue a varinha de reescrita e dispare com a **Extensão VIP v2.0**.\n"
-        "4. **Download Zero-RAM (Aba 2):** A Aba 2 limpa o `.ZIP` da memória RAM automaticamente após extrair, remove clipes mudos e entrega o link direto do disco para vídeos longos de 11+ minutos!"
+        "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** O sistema fatia em cenas de 8s, trava aparência fixa de personagens e gera prompts em linha única.\n"
+        "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** e envie pela **Extensão VIP v2.0**.\n"
+        "4. **Montagem Local FFmpeg.wasm (Aba 2):** Selecione até **1 GB ou 2 GB de vídeos** direto no modo **FFmpeg.wasm no Navegador** — sem upload lento e sem queda de memória!"
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -1165,7 +1915,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "🎞️ 2. Montagem Zero-RAM (Vídeos Longos), Filtro Anti-Mudos & .SRT",
+    "⚡ 2. Montagem Local FFmpeg.wasm (900MB+ Sem Upload) & Nuvem",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -1331,8 +2081,7 @@ with tab1:
 
         auto_director_enabled = st.checkbox(
             "🎬 Diretor Visual + Auto-DNA de Elenco (Trava cabelo/roupa automaticamente mesmo sem foto)",
-            value=True,
-            help="Cria ficha automática de aparência física caso a história tenha personagens e traduz cenários em português."
+            value=True
         )
 
     with cs2:
@@ -1431,394 +2180,287 @@ with tab1:
                 st.code(full_txt_joined, language="text")
 
 with tab2:
-    # Pasta estática servida direto pelo servidor web (0 MB de consumo na RAM do Python!)
-    static_delivery_dir = os.path.join(os.getcwd(), "static", "entregas")
-    os.makedirs(static_delivery_dir, exist_ok=True)
-    now_ts = time.time()
-    for old_f in os.listdir(static_delivery_dir):
-        old_p = os.path.join(static_delivery_dir, old_f)
-        try:
-            if os.path.isfile(old_p) and (now_ts - os.path.getmtime(old_p)) > 1800:
-                os.remove(old_p)
-        except Exception:
-            pass
+    st.subheader(f"Montagem Final ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
 
-    st.subheader(f"Montagem de Vídeos Longos (Zero Estouro de RAM), Filtro Anti-Mudos & Legendas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
+    engine_choice = st.radio(
+        "⚙️ Escolha onde processar os vídeos:",
+        [
+            "⚡ Modo Local no Navegador — FFmpeg.wasm (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Upload p/ Servidor!)",
+            "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB ou uso em celulares antigos)"
+        ],
+        index=0
+    )
 
-    col1, col2 = st.columns([1, 1])
-    with col1:
-        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para pareamento 1-para-1 e legenda .SRT):", value=st.session_state["saved_script"], height=265)
-        drop_muted_dups = st.checkbox(
-            "🧹 Ignorar automaticamente clipes mudos ou takes extras duplicados",
-            value=True
-        )
-        compress_long_video = st.checkbox(
-            "⚡ Otimizar tamanho final para vídeos longos de 8+ minutos (Reduz de ~400MB para ~95MB sem perder nitidez)",
-            value=True,
-            help="Recompacta de forma leve em fluxo contínuo para garantir download rápido e nunca estourar os 1GB do Streamlit Cloud."
-        )
-        burn_subs = st.checkbox(
-            "💬 Gravar legendas embutidas direto na imagem do vídeo (Recomendado para vídeos curtos)",
-            value=False
-        )
+    roteiro_input = st.text_area(
+        "📜 Roteiro Completo do Vídeo (Usado para alinhar as cenas na ordem exata e gerar a legenda .SRT — clique fora da caixa após colar):",
+        value=st.session_state["saved_script"],
+        height=175
+    )
+    if roteiro_input != st.session_state.get("saved_script", ""):
+        st.session_state["saved_script"] = roteiro_input
 
-    with col2:
-        up_key = f"zip_uploader_{st.session_state['uploader_reset_id']}"
-        uploaded_files = st.file_uploader(
-            "📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):",
-            type=["zip", "mp4"],
-            accept_multiple_files=True,
-            key=up_key
-        )
+    if "FFmpeg.wasm" in engine_choice:
+        render_ffmpeg_wasm_assembler(roteiro_input, selected_lang, active_api_key, is_vertical)
+    else:
+        static_delivery_dir = os.path.join(os.getcwd(), "static", "entregas")
+        os.makedirs(static_delivery_dir, exist_ok=True)
+        now_ts = time.time()
+        for old_f in os.listdir(static_delivery_dir):
+            old_p = os.path.join(static_delivery_dir, old_f)
+            try:
+                if os.path.isfile(old_p) and (now_ts - os.path.getmtime(old_p)) > 1800:
+                    os.remove(old_p)
+            except Exception:
+                pass
 
-        ca_mix1, ca_mix2 = st.columns([1, 1])
-        with ca_mix1:
-            master_custom_audio = st.file_uploader("🎙️ 3A. Trocar Voz Principal (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
-        with ca_mix2:
-            bg_music_file = st.file_uploader("🎵 3B. Música de Fundo Suave (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_bgm")
+        col1, col2 = st.columns([1, 1])
+        with col1:
+            drop_muted_dups = st.checkbox("🧹 Ignorar automaticamente clipes mudos ou takes extras duplicados", value=True)
+            compress_long_video = st.checkbox("⚡ Otimizar tamanho final para vídeos longos", value=True)
+            burn_subs = st.checkbox("💬 Gravar legendas embutidas direto na imagem do vídeo", value=False)
+            sort_method = st.radio(
+                "Como ordenar os clipes antes de juntar?",
+                [
+                    "🗣️ Pareamento Exclusivo 1-para-1 pela frase + palavras-chave raras",
+                    "🔢 Ordenar apenas pelo nome dos arquivos"
+                ]
+            )
 
-        bgm_vol_pct = 12
-        if bg_music_file is not None:
-            bgm_vol_pct = st.slider("🔉 Volume da Música de Fundo (%):", min_value=3, max_value=40, value=12, step=1)
+        with col2:
+            up_key = f"zip_uploader_{st.session_state['uploader_reset_id']}"
+            uploaded_files = st.file_uploader(
+                "📦 Envie o .ZIP (até ~180MB) ou os .MP4:",
+                type=["zip", "mp4"],
+                accept_multiple_files=True,
+                key=up_key
+            )
+            ca_mix1, ca_mix2 = st.columns([1, 1])
+            with ca_mix1:
+                master_custom_audio = st.file_uploader("🎙️ Trocar Voz Principal (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
+            with ca_mix2:
+                bg_music_file = st.file_uploader("🎵 Música de Fundo (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_bgm")
 
-        sort_method = st.radio(
-            "Como ordenar os clipes antes de juntar?",
-            [
-                "🗣️ Pareamento Exclusivo 1-para-1 pela frase + palavras-chave raras (Recomendado)",
-                "🔢 Ordenar apenas pelo nome dos arquivos (Para vídeos intencionalmente mudos)"
-            ]
-        )
+            bgm_vol_pct = 12
+            if bg_music_file is not None:
+                bgm_vol_pct = st.slider("🔉 Volume da Música de Fundo (%):", min_value=3, max_value=40, value=12, step=1)
 
-    if st.button("🚀 ORGANIZAR VÍDEO LONGO E GERAR LINK DIRETO (ZERO RAM)", type="primary", use_container_width=True):
-        if not uploaded_files:
-            st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4 gerados no Google Flow.")
-        elif "Pareamento" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
-            st.error("Cole o roteiro à esquerda (ou mude para ordenar pelo nome dos arquivos se os vídeos forem mudos).")
-        else:
-            import speech_recognition as sr
-            sem = get_render_semaphore()
-            wait_box = st.empty()
-            wait_box.info("⏳ Entrando na fila inteligente de renderização...")
+        if st.button("🚀 ORGANIZAR NA NUVEM E GERAR LINK DIRETO", type="primary", use_container_width=True):
+            if not uploaded_files:
+                st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4.")
+            elif "Pareamento" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
+                st.error("Cole o roteiro acima primeiro.")
+            else:
+                import speech_recognition as sr
+                sem = get_render_semaphore()
+                wait_box = st.empty()
+                wait_box.info("⏳ Entrando na fila de renderização...")
 
-            with sem:
-                wait_box.empty()
-                ffmpeg_exe = get_ffmpeg()
-                work_dir = tempfile.mkdtemp()
-                target_w = 720 if is_vertical else 1280
-                target_h = 1280 if is_vertical else 720
-                scale_filter = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps=30"
+                with sem:
+                    wait_box.empty()
+                    ffmpeg_exe = get_ffmpeg()
+                    work_dir = tempfile.mkdtemp()
+                    target_w = 720 if is_vertical else 1280
+                    target_h = 1280 if is_vertical else 720
+                    scale_filter = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps=30"
 
-                try:
-                    extract_dir = os.path.join(work_dir, "extraidos")
-                    ordered_dir = os.path.join(work_dir, "ordenados")
-                    os.makedirs(extract_dir, exist_ok=True)
-                    os.makedirs(ordered_dir, exist_ok=True)
+                    try:
+                        extract_dir = os.path.join(work_dir, "extraidos")
+                        ordered_dir = os.path.join(work_dir, "ordenados")
+                        os.makedirs(extract_dir, exist_ok=True)
+                        os.makedirs(ordered_dir, exist_ok=True)
 
-                    mp4_files = []
-                    for uf in uploaded_files:
-                        uf.seek(0)
-                        if uf.name.lower().endswith(".zip"):
-                            with zipfile.ZipFile(uf, 'r') as z:
-                                for m in z.namelist():
-                                    if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
-                                        fn = os.path.basename(m)
-                                        if fn:
-                                            t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{fn}")
-                                            with z.open(m) as src, open(t_path, 'wb') as dst:
-                                                shutil.copyfileobj(src, dst, length=2 * 1024 * 1024)
-                                            if os.path.getsize(t_path) > 1000:
-                                                mp4_files.append(t_path)
-                        elif uf.name.lower().endswith(".mp4"):
-                            t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{uf.name}")
-                            with open(t_path, "wb") as f:
-                                shutil.copyfileobj(uf, f, length=2 * 1024 * 1024)
-                            if os.path.getsize(t_path) > 1000:
-                                mp4_files.append(t_path)
-                        try:
-                            uf.close()
-                        except Exception:
-                            pass
+                        mp4_files = []
+                        for uf in uploaded_files:
+                            uf.seek(0)
+                            if uf.name.lower().endswith(".zip"):
+                                with zipfile.ZipFile(uf, 'r') as z:
+                                    for m in z.namelist():
+                                        if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
+                                            fn = os.path.basename(m)
+                                            if fn:
+                                                t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{fn}")
+                                                with z.open(m) as src, open(t_path, 'wb') as dst:
+                                                    shutil.copyfileobj(src, dst, length=2 * 1024 * 1024)
+                                                if os.path.getsize(t_path) > 1000:
+                                                    mp4_files.append(t_path)
+                            elif uf.name.lower().endswith(".mp4"):
+                                t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{uf.name}")
+                                with open(t_path, "wb") as f:
+                                    shutil.copyfileobj(uf, f, length=2 * 1024 * 1024)
+                                if os.path.getsize(t_path) > 1000:
+                                    mp4_files.append(t_path)
+                            try:
+                                uf.close()
+                            except Exception:
+                                pass
 
-                    del uploaded_files
-                    gc.collect()
+                        del uploaded_files
+                        gc.collect()
 
-                    if not mp4_files:
-                        st.error("Nenhum vídeo .MP4 válido foi encontrado.")
-                    else:
-                        raw_clips = []
-                        p_bar = st.progress(0, text="Transcrevendo cenas com baixo consumo de memória...")
-                        total = len(mp4_files)
-                        discarded_list = []
-                        missing_scenes = []
-
-                        if "Pareamento" in sort_method:
-                            recognizer = sr.Recognizer()
-                            temp_wav = os.path.join(work_dir, "_temp.wav")
-                            sr_code = LANGUAGES[selected_lang]["sr_code"]
-                            for idx, v_path in enumerate(mp4_files, 1):
-                                fn = os.path.basename(v_path)
-                                tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
-                                dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                raw_clips.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'duration': dur_c})
-                                if idx % 15 == 0:
-                                    gc.collect()
-                                p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:40] or '[Sem fala]'}'")
-                            p_bar.progress(0.66, text="Alinhando cenas cronologicamente...")
-                            results, discarded_list, missing_scenes = assign_clips_to_scenes_exclusively(
-                                raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups
-                            )
-                            for dc in discarded_list:
-                                try:
-                                    os.remove(dc["path"])
-                                except Exception:
-                                    pass
-                            if not results and discarded_list:
-                                st.warning("⚠️ Nenhuma fala reconhecida em nenhum clipe! Mantendo todos ordenados pelo nome do arquivo.")
-                                results = sorted(discarded_list, key=lambda x: x["original_name"].lower())
-                                discarded_list = []
+                        if not mp4_files:
+                            st.error("Nenhum vídeo .MP4 válido foi encontrado.")
                         else:
-                            mp4_files.sort(key=lambda p: os.path.basename(p).lower())
-                            results = []
-                            for idx, v_path in enumerate(mp4_files, 1):
-                                dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                results.append({
-                                    'path': v_path,
-                                    'original_name': os.path.basename(v_path),
-                                    'transcript': '(Ordenado por nome)',
-                                    'position': idx,
-                                    'matched_scene_idx': idx - 1,
-                                    'match_score': 100.0,
-                                    'duration': dur_c
-                                })
-                                p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
+                            raw_clips = []
+                            p_bar = st.progress(0, text="Transcrevendo cenas...")
+                            total = len(mp4_files)
+                            discarded_list = []
+                            missing_scenes = []
 
-                        if results:
-                            srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
-                            srt_file_path = os.path.join(work_dir, "legendas.srt")
-                            with open(srt_file_path, "w", encoding="utf-8") as sf:
-                                sf.write(srt_content)
-
-                            c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
-                            with open(c_list, 'w', encoding='utf-8') as cf:
-                                for s_num, item in enumerate(results, 1):
-                                    n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
-                                    os.replace(item['path'], n_path)
-                                    item['path'] = n_path
-                                    cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
-
-                            joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
-                            p_bar.progress(0.75, text="Unindo todas as cenas via stream direto...")
-
-                            if compress_long_video and len(results) >= 25:
-                                fast_join = os.path.join(work_dir, "FAST_JOIN.mp4")
-                                r_fast = subprocess.run(
-                                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', fast_join],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                            if "Pareamento" in sort_method:
+                                recognizer = sr.Recognizer()
+                                temp_wav = os.path.join(work_dir, "_temp.wav")
+                                sr_code = LANGUAGES[selected_lang]["sr_code"]
+                                for idx, v_path in enumerate(mp4_files, 1):
+                                    fn = os.path.basename(v_path)
+                                    tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
+                                    dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
+                                    raw_clips.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'duration': dur_c})
+                                    if idx % 15 == 0:
+                                        gc.collect()
+                                    p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:40] or '[Sem fala]'}'")
+                                results, discarded_list, missing_scenes = assign_clips_to_scenes_exclusively(
+                                    raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups
                                 )
-                                shutil.rmtree(extract_dir, ignore_errors=True)
-                                shutil.rmtree(ordered_dir, ignore_errors=True)
-                                if r_fast.returncode == 0 and os.path.exists(fast_join) and os.path.getsize(fast_join) > 5000:
-                                    p_bar.progress(0.82, text="Compactando vídeo longo sem perder qualidade para download leve...")
-                                    subprocess.run([
-                                        ffmpeg_exe, '-y', '-i', fast_join,
-                                        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-threads', '1',
-                                        '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', joined_mp4
-                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                    if not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
-                                        os.replace(fast_join, joined_mp4)
-                                    elif os.path.exists(fast_join):
-                                        os.remove(fast_join)
-                                else:
-                                    joined_mp4 = fast_join
+                                for dc in discarded_list:
+                                    try:
+                                        os.remove(dc["path"])
+                                    except Exception:
+                                        pass
+                                if not results and discarded_list:
+                                    results = sorted(discarded_list, key=lambda x: x["original_name"].lower())
+                                    discarded_list = []
                             else:
+                                mp4_files.sort(key=lambda p: os.path.basename(p).lower())
+                                results = []
+                                for idx, v_path in enumerate(mp4_files, 1):
+                                    dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
+                                    results.append({
+                                        'path': v_path, 'original_name': os.path.basename(v_path),
+                                        'transcript': '(Ordenado por nome)', 'position': idx,
+                                        'matched_scene_idx': idx - 1, 'match_score': 100.0, 'duration': dur_c
+                                    })
+                                    p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
+
+                            if results:
+                                srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
+                                srt_file_path = os.path.join(work_dir, "legendas.srt")
+                                with open(srt_file_path, "w", encoding="utf-8") as sf:
+                                    sf.write(srt_content)
+
+                                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
+                                with open(c_list, 'w', encoding='utf-8') as cf:
+                                    for s_num, item in enumerate(results, 1):
+                                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
+                                        os.replace(item['path'], n_path)
+                                        item['path'] = n_path
+                                        cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
+
+                                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
+                                p_bar.progress(0.78, text="Unindo cenas...")
                                 res = subprocess.run(
                                     [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
                                     stdout=subprocess.PIPE, stderr=subprocess.PIPE
                                 )
-                                if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
-                                    p_bar.progress(0.80, text="Padronizando formato dos clipes...")
-                                    norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
-                                    with open(norm_list, 'w', encoding='utf-8') as nf:
-                                        for s_num, item in enumerate(results, 1):
-                                            norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
-                                            has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-                                            if "Audio:" in has_aud:
-                                                subprocess.run([
-                                                    ffmpeg_exe, '-y', '-i', item['path'],
-                                                    '-vf', scale_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
-                                                    '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
-                                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                            else:
-                                                subprocess.run([
-                                                    ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-                                                    '-i', item['path'], '-vf', scale_filter,
-                                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
-                                                    '-c:a', 'aac', '-shortest', norm_clip
-                                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                            try:
-                                                os.remove(item['path'])
-                                            except Exception:
-                                                pass
-                                            if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
-                                                nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
-                                    subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                shutil.rmtree(extract_dir, ignore_errors=True)
+                                shutil.rmtree(ordered_dir, ignore_errors=True)
 
-                            shutil.rmtree(extract_dir, ignore_errors=True)
-                            shutil.rmtree(ordered_dir, ignore_errors=True)
-
-                            out_mp4 = joined_mp4
-
-                            if master_custom_audio is not None and os.path.exists(out_mp4):
-                                p_bar.progress(0.88, text="Aplicando sua locução principal...")
-                                master_custom_audio.seek(0)
-                                custom_aud_path = os.path.join(work_dir, "locucao_master" + os.path.splitext(master_custom_audio.name)[1])
-                                with open(custom_aud_path, "wb") as fa:
-                                    shutil.copyfileobj(master_custom_audio, fa)
-                                dubbed_mp4 = os.path.join(work_dir, "VIDEO_VOZ_CUSTOM.mp4")
-                                res_mux = subprocess.run([
-                                    ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path,
-                                    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-                                    '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', dubbed_mp4
-                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
-                                    if out_mp4 != dubbed_mp4 and os.path.exists(out_mp4):
+                                out_mp4 = joined_mp4
+                                if compress_long_video and len(results) >= 25 and os.path.exists(out_mp4):
+                                    comp_mp4 = os.path.join(work_dir, "COMP.mp4")
+                                    subprocess.run([
+                                        ffmpeg_exe, '-y', '-i', out_mp4, '-c:v', 'libx264', '-preset', 'ultrafast',
+                                        '-crf', '26', '-threads', '1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', comp_mp4
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    if os.path.exists(comp_mp4) and os.path.getsize(comp_mp4) > 5000:
                                         os.remove(out_mp4)
-                                    out_mp4 = dubbed_mp4
+                                        out_mp4 = comp_mp4
 
-                            if bg_music_file is not None and os.path.exists(out_mp4):
-                                p_bar.progress(0.93, text="Mixando trilha sonora de fundo...")
-                                bg_music_file.seek(0)
-                                bgm_path = os.path.join(work_dir, "bgm_track" + os.path.splitext(bg_music_file.name)[1])
-                                with open(bgm_path, "wb") as fb:
-                                    shutil.copyfileobj(bg_music_file, fb)
-                                bgm_out_mp4 = os.path.join(work_dir, "VIDEO_COM_BGM.mp4")
-                                vol_float = round(bgm_vol_pct / 100.0, 3)
-                                has_main_aud = "Audio:" in subprocess.run([ffmpeg_exe, '-i', out_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-                                if has_main_aud:
-                                    cmd_bgm = [
+                                if master_custom_audio is not None and os.path.exists(out_mp4):
+                                    master_custom_audio.seek(0)
+                                    custom_aud_path = os.path.join(work_dir, "loc" + os.path.splitext(master_custom_audio.name)[1])
+                                    with open(custom_aud_path, "wb") as fa:
+                                        shutil.copyfileobj(master_custom_audio, fa)
+                                    dubbed_mp4 = os.path.join(work_dir, "VOZ.mp4")
+                                    if subprocess.run([
+                                        ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path, '-map', '0:v:0', '-map', '1:a:0',
+                                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', dubbed_mp4
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(dubbed_mp4):
+                                        os.remove(out_mp4)
+                                        out_mp4 = dubbed_mp4
+
+                                if bg_music_file is not None and os.path.exists(out_mp4):
+                                    bg_music_file.seek(0)
+                                    bgm_path = os.path.join(work_dir, "bgm" + os.path.splitext(bg_music_file.name)[1])
+                                    with open(bgm_path, "wb") as fb:
+                                        shutil.copyfileobj(bg_music_file, fb)
+                                    bgm_out_mp4 = os.path.join(work_dir, "BGM.mp4")
+                                    vol_float = round(bgm_vol_pct / 100.0, 3)
+                                    if subprocess.run([
                                         ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
                                         '-filter_complex', f"[1:a]volume={vol_float}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
                                         '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', bgm_out_mp4
-                                    ]
-                                else:
-                                    cmd_bgm = [
-                                        ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
-                                        '-filter_complex', f"[1:a]volume={vol_float}[aout]",
-                                        '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', bgm_out_mp4
-                                    ]
-                                res_bgm = subprocess.run(cmd_bgm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                if res_bgm.returncode == 0 and os.path.exists(bgm_out_mp4) and os.path.getsize(bgm_out_mp4) > 5000:
-                                    if out_mp4 != bgm_out_mp4 and os.path.exists(out_mp4):
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(bgm_out_mp4):
                                         os.remove(out_mp4)
-                                    out_mp4 = bgm_out_mp4
+                                        out_mp4 = bgm_out_mp4
 
-                            if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
-                                p_bar.progress(0.96, text="Gravando legendas dinâmicas no vídeo...")
-                                subbed_mp4 = os.path.join(work_dir, "VIDEO_LEGENDADO.mp4")
-                                srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
-                                f_size = 15 if is_vertical else 18
-                                margin_v = 55 if is_vertical else 28
-                                sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
-                                res_sub = subprocess.run([
-                                    ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter,
-                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
-                                    '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
-                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                if res_sub.returncode == 0 and os.path.exists(subbed_mp4) and os.path.getsize(subbed_mp4) > 5000:
-                                    if out_mp4 != subbed_mp4 and os.path.exists(out_mp4):
+                                if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
+                                    subbed_mp4 = os.path.join(work_dir, "SUB.mp4")
+                                    srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
+                                    f_size = 15 if is_vertical else 18
+                                    margin_v = 55 if is_vertical else 28
+                                    sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
+                                    if subprocess.run([
+                                        ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter, '-c:v', 'libx264', '-preset', 'ultrafast',
+                                        '-crf', '25', '-threads', '1', '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(subbed_mp4):
                                         os.remove(out_mp4)
-                                    out_mp4 = subbed_mp4
+                                        out_mp4 = subbed_mp4
 
-                            p_bar.progress(1.0, text="Liberando memória RAM do upload e gerando link direto...")
-                            if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
-                                prev_file = st.session_state.get("final_video_disk_path", "")
-                                if prev_file and os.path.exists(prev_file):
-                                    try:
-                                        os.remove(prev_file)
-                                    except Exception:
-                                        pass
+                                p_bar.progress(1.0, text="Concluído!")
+                                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
+                                    prev_file = st.session_state.get("final_video_disk_path", "")
+                                    if prev_file and os.path.exists(prev_file):
+                                        try:
+                                            os.remove(prev_file)
+                                        except Exception:
+                                            pass
+                                    fname_only = f"VIDEO_FINAL_{uuid.uuid4().hex[:10]}.mp4"
+                                    safe_final_path = os.path.join(static_delivery_dir, fname_only)
+                                    shutil.move(out_mp4, safe_final_path)
+                                    st.session_state["final_video_disk_path"] = safe_final_path
+                                    st.session_state["final_video_static_url"] = f"app/static/entregas/{fname_only}"
+                                    st.session_state["final_srt_text"] = srt_content
+                                    st.session_state["uploader_reset_id"] += 1
+                                    gc.collect()
+                                    st.rerun()
+                    finally:
+                        shutil.rmtree(work_dir, ignore_errors=True)
+                        gc.collect()
 
-                                fname_only = f"VIDEO_FINAL_{uuid.uuid4().hex[:10]}.mp4"
-                                safe_final_path = os.path.join(static_delivery_dir, fname_only)
-                                shutil.move(out_mp4, safe_final_path)
-
-                                st.session_state["final_video_disk_path"] = safe_final_path
-                                st.session_state["final_video_static_url"] = f"app/static/entregas/{fname_only}"
-                                st.session_state["final_srt_text"] = srt_content
-                                st.session_state["discarded_count"] = len(discarded_list)
-                                st.session_state["missing_scenes_list"] = missing_scenes
-                                st.session_state["final_report"] = [
-                                    {
-                                        "original_name": r["original_name"],
-                                        "transcript": r["transcript"],
-                                        "matched_scene": (r.get("matched_scene_idx") + 1) if r.get("matched_scene_idx") is not None else "Extra",
-                                        "score": r.get("match_score", 0)
-                                    } for r in results
-                                ]
-                                # Reseta o file_uploader para despejar os 300MB-500MB do .ZIP da RAM antes de mostrar a tela de download!
-                                st.session_state["uploader_reset_id"] += 1
-                                gc.collect()
-                                st.rerun()
-                            else:
-                                st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique os vídeos enviados.")
-                finally:
-                    shutil.rmtree(work_dir, ignore_errors=True)
-                    gc.collect()
-
-    final_disk_p = st.session_state.get("final_video_disk_path", "")
-    if final_disk_p and os.path.exists(final_disk_p):
-        size_mb = os.path.getsize(final_disk_p) / (1024 * 1024)
-        disc_n = st.session_state.get("discarded_count", 0)
-        miss_sc = st.session_state.get("missing_scenes_list", [])
-        static_rel_url = st.session_state.get("final_video_static_url", "")
-
-        msg_extra = f" | 🧹 {disc_n} clipe(s) mudo(s)/duplicado(s) removido(s)!" if disc_n > 0 else ""
-        st.success(f"✅ VÍDEO LONGO PRONTO! ({len(st.session_state.get('final_report', []))} cenas válidas — {size_mb:.1f} MB{msg_extra})")
-
-        if miss_sc:
-            st.warning(
-                f"💡 **Aviso útil:** As seguintes cenas vieram mudas do Flow e foram omitidas: **Cena(s) {', '.join(map(str, miss_sc))}**."
-            )
-
-        dl_c1, dl_c2 = st.columns([2, 1])
-        with dl_c1:
-            # Link HTML estático direto: 0 MB de uso na memória RAM do Python (nunca derruba vídeos de 11+ min!)
-            st.markdown(
-                f'''<a href="{static_rel_url}" download="VIDEO_FINAL_COMPLETO.mp4" target="_blank"
-                style="display:block;text-align:center;background:#16a34a;color:#ffffff;padding:13px 18px;
-                border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;margin-bottom:8px;">
-                ⚡ BAIXAR VÍDEO COMPLETO DIRETO DO DISCO ({size_mb:.1f} MB — ZERO RAM)
-                </a>''',
-                unsafe_allow_html=True
-            )
-            if size_mb <= 130.0:
-                if st.checkbox("Usar botão tradicional do Streamlit (caso ainda não tenha ativado o config.toml)"):
-                    with open(final_disk_p, "rb") as stream_f:
-                        st.download_button(
-                            f"💾 Baixar via Botão Alternativo ({size_mb:.1f} MB)",
-                            data=stream_f,
-                            file_name="VIDEO_FINAL_PRONTO.mp4",
-                            mime="video/mp4",
-                            use_container_width=True
-                        )
-        with dl_c2:
-            if st.session_state.get("final_srt_text"):
-                st.download_button(
-                    "📝 BAIXAR LEGENDA SINCRONIZADA (.SRT)",
-                    data=st.session_state["final_srt_text"],
-                    file_name="Legenda_Sincronizada.srt",
-                    mime="text/plain",
-                    use_container_width=True
+        final_disk_p = st.session_state.get("final_video_disk_path", "")
+        if final_disk_p and os.path.exists(final_disk_p):
+            size_mb = os.path.getsize(final_disk_p) / (1024 * 1024)
+            static_rel_url = st.session_state.get("final_video_static_url", "")
+            st.success(f"✅ VÍDEO PRONTO NA NUVEM! ({size_mb:.1f} MB)")
+            dl_c1, dl_c2 = st.columns([2, 1])
+            with dl_c1:
+                st.markdown(
+                    f'''<a href="{static_rel_url}" download="VIDEO_FINAL_COMPLETO.mp4" target="_blank"
+                    style="display:block;text-align:center;background:#16a34a;color:#ffffff;padding:13px 18px;
+                    border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">
+                    ⚡ BAIXAR VÍDEO DIRETO DO DISCO ({size_mb:.1f} MB)
+                    </a>''',
+                    unsafe_allow_html=True
                 )
-
-        if size_mb <= 45.0:
-            st.video(final_disk_p)
-        else:
-            st.caption("🛡️ Vídeo longo protegido: clique no botão verde acima para transferência direta pelo navegador sem usar memória RAM do servidor.")
-
-        with st.expander("📋 Relatório do Pareamento Exclusivo Cena-a-Cena"):
-            for i, r in enumerate(st.session_state.get("final_report", []), 1):
-                st.write(f"**Posição {i:03d}** ➔ Roteiro Cena `{r.get('matched_scene')}` ({r.get('score')}% similaridade) | `{r['original_name']}` — 🗣️ *{r['transcript']}*")
+            with dl_c2:
+                if st.session_state.get("final_srt_text"):
+                    st.download_button(
+                        "📝 BAIXAR LEGENDA (.SRT)",
+                        data=st.session_state["final_srt_text"],
+                        file_name="Legenda_Sincronizada.srt",
+                        mime="text/plain",
+                        use_container_width=True
+                    )
 
 with tab3:
     st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
@@ -1854,4 +2496,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v2.5 COMPLETO (STATIC ZERO-RAM + AUTO-DNA + ANTI-MUDOS)
+# FIM DO ARQUIVO SAAS ULTIMATE v2.6 (FFMPEG.WASM LOCAL ZERO-UPLOAD + WHISPER BATCH)
