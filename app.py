@@ -115,7 +115,8 @@ for k_def, v_def in {
     "dna_char_b": DEFAULT_CHAR_B,
     "dna_single_char": "",
     "voice_char_a": "52-year-old Brazilian male baritone voice (105 Hz), calm Minas Gerais accent",
-    "voice_char_b": "22-year-old Brazilian young female voice (210 Hz), natural expressive accent"
+    "voice_char_b": "22-year-old Brazilian young female voice (210 Hz), natural expressive accent",
+    "uploader_reset_id": 0
 }.items():
     if k_def not in st.session_state:
         st.session_state[k_def] = v_def
@@ -310,7 +311,6 @@ def fix_pronunciation(text, lang_label):
         return ""
     t = text.strip()
     if "Português" in lang_label:
-        # Correção automática de nomes bíblicos/históricos em grafia inglesa para pronúncia PT-BR
         pt_names = {
             r'\bGoliath\b': 'Golias',
             r'\bDavid\b': 'Davi',
@@ -611,11 +611,6 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
     return "\n\n".join(blocks), dur, num_chunks
 
 def generate_auto_cast_dna(topic, raw_script_sample, style_choice, api_key):
-    """
-    Se o usuário não preencheu o DNA físico manualmente e a história tem personagens recorrentes
-    (ex: Davi e Golias), gera automaticamente 1 linha concisa travando cabelo, rosto, idade e roupa exata
-    para que o personagem nunca mude de cabelo liso para cacheado ou ruivo entre as cenas.
-    """
     clean_key = api_key.strip() if api_key else ""
     if not clean_key:
         return ""
@@ -670,7 +665,7 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
             f"CRITICAL STORYTELLING, CHARACTER HAIR/OUTFIT LOCK & NATIVE NAMES RULES:\n"
             f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background (e.g., tending sheep BEFORE going to battlefield); middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action. NEVER place battlefield action before peaceful introduction, and NEVER place confrontation after victory!\n"
-            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character (e.g., '14-year-old boy David with short curly dark-brown hair and beige linen tunic') and repeat those EXACT traits in every [CENA: ...] where they appear (never switch between straight, curly, or red hair!).\n"
+            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character (e.g., '14-year-old boy David with short curly dark-brown hair and beige linen tunic') and repeat those EXACT traits in every [CENA: ...] where they appear (never switch between straight, curly, or red hair!). Visuals feature {char_hint}.\n"
             f"3. 100% NATIVE NAMES IN {lang_en}: In LOCUÇÃO, ALWAYS write proper names translated into {lang_en} (e.g., write 'Davi' and 'Golias' in Portuguese, NEVER 'David' or 'Goliath').\n"
             f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (13 to 18 words) distinct and progressive so audio alignment is 100% unmistakable. All characters on screen keep mouths closed.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
@@ -987,7 +982,6 @@ def normalize_text(text):
 
 def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpeg_exe):
     import speech_recognition as sr
-    # Tenta primeiro o clipe completo com normalização leve de volume para não perder falas baixas
     attempts = [
         ('0.0', '8.2', 'volume=1.6'),
         ('0.2', '7.8', 'volume=1.0'),
@@ -1012,12 +1006,6 @@ def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpe
 
 # ======= PAREAMENTO CRONOLÓGICO + DESCARTE DE MUDOS E TAKES EXTRAS =======
 def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_unmatched=True):
-    """
-    Alinha cada clipe à sua cena exata usando:
-    1) Similaridade de frase completa (fuzz.ratio + token_sort_ratio)
-    2) Bônus por palavras exclusivas daquela cena (ex: 'ovelhas', 'funda', 'testa', 'compartilhe')
-    3) Descarte automático de clipes mudos ou takes duplicados para nunca sujar o final do vídeo!
-    """
     from rapidfuzz import fuzz
     from collections import Counter
 
@@ -1033,7 +1021,6 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
             c["match_score"] = 100.0
         return clips_info, [], []
 
-    # Calcula frequência das palavras no roteiro para dar peso extra a palavras únicas de cada cena
     word_freq = Counter()
     scene_word_sets = []
     for sn in scene_norms:
@@ -1062,7 +1049,6 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
             r_set = fuzz.token_set_ratio(t_norm, s_norm)
             base_score = (r_full * 0.45) + (r_sort * 0.35) + (r_set * 0.20)
 
-            # Bônus forte para palavras exclusivas/raras que só aparecem nesta cena específica
             s_words = scene_word_sets[s_idx]
             shared_rare_bonus = 0.0
             for sw in (t_words & s_words):
@@ -1084,7 +1070,6 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
     assigned_clips = {}
     used_scenes = set()
 
-    # Pareamento estrito 1-para-1 (cada cena do roteiro aceita APENAS o melhor clipe correspondente)
     for score, c_idx, s_idx in candidate_pairs:
         if score < 38.0:
             break
@@ -1135,14 +1120,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo sem sobras mudas"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar vídeos curtos ou longos (11+ min) sem estourar a RAM"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
-        "2. **Auto-DNA de Elenco (Aba 1):** Mesmo sem subir foto, o sistema trava automaticamente o cabelo, rosto e roupa de personagens como Davi e Golias em todas as cenas!\n"
+        "2. **Auto-DNA de Elenco (Aba 1):** Mesmo sem subir foto, o sistema trava automaticamente o cabelo, rosto e roupa de personagens recorrentes em todas as cenas!\n"
         "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** (evita takes duplicados), desligue a varinha de reescrita e dispare com a **Extensão VIP v2.0**.\n"
-        "4. **Filtro Anti-Mudos (Aba 2):** A Aba 2 descarta sozinha clipes mudos ou takes extras para nunca sobrar vídeo sem fala depois do encerramento!"
+        "4. **Download Zero-RAM (Aba 2):** A Aba 2 limpa o `.ZIP` da memória RAM automaticamente após extrair, remove clipes mudos e entrega o link direto do disco para vídeos longos de 11+ minutos!"
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -1180,7 +1165,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "🎞️ 2. Montagem, Filtro Anti-Mudos & Legendas (.SRT)",
+    "🎞️ 2. Montagem Zero-RAM (Vídeos Longos), Filtro Anti-Mudos & .SRT",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -1316,7 +1301,7 @@ with tab1:
     st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA ou Colar Qualquer Roteiro / Texto Puro")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
+        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: Juiz de Fora vs Uberlândia / A História de Davi e Golias")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
     with col_t3:
@@ -1347,7 +1332,7 @@ with tab1:
         auto_director_enabled = st.checkbox(
             "🎬 Diretor Visual + Auto-DNA de Elenco (Trava cabelo/roupa automaticamente mesmo sem foto)",
             value=True,
-            help="Cria ficha automática de aparência física caso a história tenha personagens (ex: Davi e Golias) e traduz cenários em português."
+            help="Cria ficha automática de aparência física caso a história tenha personagens e traduz cenários em português."
         )
 
     with cs2:
@@ -1364,7 +1349,6 @@ with tab1:
             st.session_state["saved_script"] = script_for_prompts
             scenes = extract_scenes_for_prompts(script_for_prompts, selected_lang)
 
-            # Se o usuário não definiu DNA manual e não é Modo 2, gera Auto-DNA automático se houver personagens na história
             effective_char_lock = st.session_state.get("dna_single_char", "").strip()
             if not effective_char_lock and "Modo 2" not in audio_mode and auto_director_enabled and active_api_key:
                 with st.spinner("🧬 Travando aparência fixa dos personagens (cabelo, rosto e traje da época)..."):
@@ -1447,34 +1431,45 @@ with tab1:
                 st.code(full_txt_joined, language="text")
 
 with tab2:
-    delivery_root = os.path.join(tempfile.gettempdir(), "estudio_pro_entregas")
-    os.makedirs(delivery_root, exist_ok=True)
+    # Pasta estática servida direto pelo servidor web (0 MB de consumo na RAM do Python!)
+    static_delivery_dir = os.path.join(os.getcwd(), "static", "entregas")
+    os.makedirs(static_delivery_dir, exist_ok=True)
     now_ts = time.time()
-    for old_f in os.listdir(delivery_root):
-        old_p = os.path.join(delivery_root, old_f)
+    for old_f in os.listdir(static_delivery_dir):
+        old_p = os.path.join(static_delivery_dir, old_f)
         try:
-            if os.path.isfile(old_p) and (now_ts - os.path.getmtime(old_p)) > 1500:
+            if os.path.isfile(old_p) and (now_ts - os.path.getmtime(old_p)) > 1800:
                 os.remove(old_p)
         except Exception:
             pass
 
-    st.subheader(f"Montagem Cronológica 1-para-1, Filtro Anti-Mudos & Legendas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
+    st.subheader(f"Montagem de Vídeos Longos (Zero Estouro de RAM), Filtro Anti-Mudos & Legendas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
 
     col1, col2 = st.columns([1, 1])
     with col1:
-        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para o pareamento exclusivo cena-a-cena e legenda .SRT):", value=st.session_state["saved_script"], height=265)
+        roteiro_input = st.text_area("📜 1. Roteiro Completo do Vídeo (Usado para pareamento 1-para-1 e legenda .SRT):", value=st.session_state["saved_script"], height=265)
         drop_muted_dups = st.checkbox(
-            "🧹 Ignorar automaticamente clipes mudos ou takes extras duplicados (Impede sobras sem fala no final!)",
+            "🧹 Ignorar automaticamente clipes mudos ou takes extras duplicados",
+            value=True
+        )
+        compress_long_video = st.checkbox(
+            "⚡ Otimizar tamanho final para vídeos longos de 8+ minutos (Reduz de ~400MB para ~95MB sem perder nitidez)",
             value=True,
-            help="Descarta vídeos que saíram sem locução no Google Flow ou variações repetidas da mesma cena para o vídeo terminar cravado na despedida."
+            help="Recompacta de forma leve em fluxo contínuo para garantir download rápido e nunca estourar os 1GB do Streamlit Cloud."
         )
         burn_subs = st.checkbox(
-            "💬 Gravar legendas embutidas direto na imagem do vídeo (Recomendado para Shorts/TikTok)",
+            "💬 Gravar legendas embutidas direto na imagem do vídeo (Recomendado para vídeos curtos)",
             value=False
         )
 
     with col2:
-        uploaded_files = st.file_uploader("📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):", type=["zip", "mp4"], accept_multiple_files=True)
+        up_key = f"zip_uploader_{st.session_state['uploader_reset_id']}"
+        uploaded_files = st.file_uploader(
+            "📦 2. Envie o .ZIP baixado do Google Flow (ou selecione os .MP4):",
+            type=["zip", "mp4"],
+            accept_multiple_files=True,
+            key=up_key
+        )
 
         ca_mix1, ca_mix2 = st.columns([1, 1])
         with ca_mix1:
@@ -1494,7 +1489,7 @@ with tab2:
             ]
         )
 
-    if st.button("🚀 ORGANIZAR NA ORDEM EXATA, LIMPAR MUDOS E ENTREGAR VÍDEO + .SRT", type="primary", use_container_width=True):
+    if st.button("🚀 ORGANIZAR VÍDEO LONGO E GERAR LINK DIRETO (ZERO RAM)", type="primary", use_container_width=True):
         if not uploaded_files:
             st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4 gerados no Google Flow.")
         elif "Pareamento" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
@@ -1523,32 +1518,35 @@ with tab2:
                     for uf in uploaded_files:
                         uf.seek(0)
                         if uf.name.lower().endswith(".zip"):
-                            z_path = os.path.join(work_dir, uf.name)
-                            with open(z_path, "wb") as f:
-                                shutil.copyfileobj(uf, f, length=4 * 1024 * 1024)
-                            with zipfile.ZipFile(z_path, 'r') as z:
+                            with zipfile.ZipFile(uf, 'r') as z:
                                 for m in z.namelist():
                                     if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
                                         fn = os.path.basename(m)
                                         if fn:
                                             t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{fn}")
                                             with z.open(m) as src, open(t_path, 'wb') as dst:
-                                                shutil.copyfileobj(src, dst, length=4 * 1024 * 1024)
+                                                shutil.copyfileobj(src, dst, length=2 * 1024 * 1024)
                                             if os.path.getsize(t_path) > 1000:
                                                 mp4_files.append(t_path)
-                            os.remove(z_path)
                         elif uf.name.lower().endswith(".mp4"):
                             t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{uf.name}")
                             with open(t_path, "wb") as f:
-                                shutil.copyfileobj(uf, f, length=4 * 1024 * 1024)
+                                shutil.copyfileobj(uf, f, length=2 * 1024 * 1024)
                             if os.path.getsize(t_path) > 1000:
                                 mp4_files.append(t_path)
+                        try:
+                            uf.close()
+                        except Exception:
+                            pass
+
+                    del uploaded_files
+                    gc.collect()
 
                     if not mp4_files:
                         st.error("Nenhum vídeo .MP4 válido foi encontrado.")
                     else:
                         raw_clips = []
-                        p_bar = st.progress(0, text="Transcrevendo cenas...")
+                        p_bar = st.progress(0, text="Transcrevendo cenas com baixo consumo de memória...")
                         total = len(mp4_files)
                         discarded_list = []
                         missing_scenes = []
@@ -1562,12 +1560,18 @@ with tab2:
                                 tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
                                 dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
                                 raw_clips.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'duration': dur_c})
-                                p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:42] or '[Sem fala detectada]'}'")
-                            p_bar.progress(0.66, text="Alinhando cenas e filtrando clipes mudos/extras...")
+                                if idx % 15 == 0:
+                                    gc.collect()
+                                p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:40] or '[Sem fala]'}'")
+                            p_bar.progress(0.66, text="Alinhando cenas cronologicamente...")
                             results, discarded_list, missing_scenes = assign_clips_to_scenes_exclusively(
                                 raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups
                             )
-                            # Se todos os vídeos forem mudos por engano, mantém todos para não falhar
+                            for dc in discarded_list:
+                                try:
+                                    os.remove(dc["path"])
+                                except Exception:
+                                    pass
                             if not results and discarded_list:
                                 st.warning("⚠️ Nenhuma fala reconhecida em nenhum clipe! Mantendo todos ordenados pelo nome do arquivo.")
                                 results = sorted(discarded_list, key=lambda x: x["original_name"].lower())
@@ -1588,148 +1592,175 @@ with tab2:
                                 })
                                 p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
 
-                        srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
-                        srt_file_path = os.path.join(work_dir, "legendas.srt")
-                        with open(srt_file_path, "w", encoding="utf-8") as sf:
-                            sf.write(srt_content)
+                        if results:
+                            srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
+                            srt_file_path = os.path.join(work_dir, "legendas.srt")
+                            with open(srt_file_path, "w", encoding="utf-8") as sf:
+                                sf.write(srt_content)
 
-                        c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
-                        with open(c_list, 'w', encoding='utf-8') as cf:
-                            for s_num, item in enumerate(results, 1):
-                                n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
-                                os.replace(item['path'], n_path)
-                                item['path'] = n_path
-                                cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
-
-                        joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
-                        p_bar.progress(0.75, text="Unindo cenas válidas com baixo uso de memória...")
-
-                        res = subprocess.run(
-                            [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
-                            stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                        )
-
-                        if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
-                            p_bar.progress(0.80, text="Padronizando formato dos clipes...")
-                            norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
-                            with open(norm_list, 'w', encoding='utf-8') as nf:
+                            c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
+                            with open(c_list, 'w', encoding='utf-8') as cf:
                                 for s_num, item in enumerate(results, 1):
-                                    norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
-                                    has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-                                    if "Audio:" in has_aud:
-                                        subprocess.run([
-                                            ffmpeg_exe, '-y', '-i', item['path'],
-                                            '-vf', scale_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-threads', '1',
-                                            '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
-                                        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                    else:
-                                        subprocess.run([
-                                            ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
-                                            '-i', item['path'], '-vf', scale_filter,
-                                            '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-threads', '1',
-                                            '-c:a', 'aac', '-shortest', norm_clip
-                                        ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
+                                    os.replace(item['path'], n_path)
+                                    item['path'] = n_path
+                                    cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
+
+                            joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
+                            p_bar.progress(0.75, text="Unindo todas as cenas via stream direto...")
+
+                            if compress_long_video and len(results) >= 25:
+                                fast_join = os.path.join(work_dir, "FAST_JOIN.mp4")
+                                r_fast = subprocess.run(
+                                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', fast_join],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                                )
+                                shutil.rmtree(extract_dir, ignore_errors=True)
+                                shutil.rmtree(ordered_dir, ignore_errors=True)
+                                if r_fast.returncode == 0 and os.path.exists(fast_join) and os.path.getsize(fast_join) > 5000:
+                                    p_bar.progress(0.82, text="Compactando vídeo longo sem perder qualidade para download leve...")
+                                    subprocess.run([
+                                        ffmpeg_exe, '-y', '-i', fast_join,
+                                        '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '26', '-threads', '1',
+                                        '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', joined_mp4
+                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                    if not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
+                                        os.replace(fast_join, joined_mp4)
+                                    elif os.path.exists(fast_join):
+                                        os.remove(fast_join)
+                                else:
+                                    joined_mp4 = fast_join
+                            else:
+                                res = subprocess.run(
+                                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
+                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
+                                )
+                                if res.returncode != 0 or not os.path.exists(joined_mp4) or os.path.getsize(joined_mp4) < 5000:
+                                    p_bar.progress(0.80, text="Padronizando formato dos clipes...")
+                                    norm_list = os.path.join(ordered_dir, 'lista_norm.txt')
+                                    with open(norm_list, 'w', encoding='utf-8') as nf:
+                                        for s_num, item in enumerate(results, 1):
+                                            norm_clip = os.path.join(ordered_dir, f"Norm_{s_num:03d}.mp4")
+                                            has_aud = subprocess.run([ffmpeg_exe, '-i', item['path']], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+                                            if "Audio:" in has_aud:
+                                                subprocess.run([
+                                                    ffmpeg_exe, '-y', '-i', item['path'],
+                                                    '-vf', scale_filter, '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
+                                                    '-c:a', 'aac', '-ar', '44100', '-ac', '2', norm_clip
+                                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                            else:
+                                                subprocess.run([
+                                                    ffmpeg_exe, '-y', '-f', 'lavfi', '-i', 'anullsrc=channel_layout=stereo:sample_rate=44100',
+                                                    '-i', item['path'], '-vf', scale_filter,
+                                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
+                                                    '-c:a', 'aac', '-shortest', norm_clip
+                                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                            try:
+                                                os.remove(item['path'])
+                                            except Exception:
+                                                pass
+                                            if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
+                                                nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
+                                    subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+
+                            shutil.rmtree(extract_dir, ignore_errors=True)
+                            shutil.rmtree(ordered_dir, ignore_errors=True)
+
+                            out_mp4 = joined_mp4
+
+                            if master_custom_audio is not None and os.path.exists(out_mp4):
+                                p_bar.progress(0.88, text="Aplicando sua locução principal...")
+                                master_custom_audio.seek(0)
+                                custom_aud_path = os.path.join(work_dir, "locucao_master" + os.path.splitext(master_custom_audio.name)[1])
+                                with open(custom_aud_path, "wb") as fa:
+                                    shutil.copyfileobj(master_custom_audio, fa)
+                                dubbed_mp4 = os.path.join(work_dir, "VIDEO_VOZ_CUSTOM.mp4")
+                                res_mux = subprocess.run([
+                                    ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path,
+                                    '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
+                                    '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', dubbed_mp4
+                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
+                                    if out_mp4 != dubbed_mp4 and os.path.exists(out_mp4):
+                                        os.remove(out_mp4)
+                                    out_mp4 = dubbed_mp4
+
+                            if bg_music_file is not None and os.path.exists(out_mp4):
+                                p_bar.progress(0.93, text="Mixando trilha sonora de fundo...")
+                                bg_music_file.seek(0)
+                                bgm_path = os.path.join(work_dir, "bgm_track" + os.path.splitext(bg_music_file.name)[1])
+                                with open(bgm_path, "wb") as fb:
+                                    shutil.copyfileobj(bg_music_file, fb)
+                                bgm_out_mp4 = os.path.join(work_dir, "VIDEO_COM_BGM.mp4")
+                                vol_float = round(bgm_vol_pct / 100.0, 3)
+                                has_main_aud = "Audio:" in subprocess.run([ffmpeg_exe, '-i', out_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
+                                if has_main_aud:
+                                    cmd_bgm = [
+                                        ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
+                                        '-filter_complex', f"[1:a]volume={vol_float}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
+                                        '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', bgm_out_mp4
+                                    ]
+                                else:
+                                    cmd_bgm = [
+                                        ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
+                                        '-filter_complex', f"[1:a]volume={vol_float}[aout]",
+                                        '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', bgm_out_mp4
+                                    ]
+                                res_bgm = subprocess.run(cmd_bgm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                if res_bgm.returncode == 0 and os.path.exists(bgm_out_mp4) and os.path.getsize(bgm_out_mp4) > 5000:
+                                    if out_mp4 != bgm_out_mp4 and os.path.exists(out_mp4):
+                                        os.remove(out_mp4)
+                                    out_mp4 = bgm_out_mp4
+
+                            if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
+                                p_bar.progress(0.96, text="Gravando legendas dinâmicas no vídeo...")
+                                subbed_mp4 = os.path.join(work_dir, "VIDEO_LEGENDADO.mp4")
+                                srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
+                                f_size = 15 if is_vertical else 18
+                                margin_v = 55 if is_vertical else 28
+                                sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
+                                res_sub = subprocess.run([
+                                    ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter,
+                                    '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '25', '-threads', '1',
+                                    '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
+                                ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
+                                if res_sub.returncode == 0 and os.path.exists(subbed_mp4) and os.path.getsize(subbed_mp4) > 5000:
+                                    if out_mp4 != subbed_mp4 and os.path.exists(out_mp4):
+                                        os.remove(out_mp4)
+                                    out_mp4 = subbed_mp4
+
+                            p_bar.progress(1.0, text="Liberando memória RAM do upload e gerando link direto...")
+                            if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
+                                prev_file = st.session_state.get("final_video_disk_path", "")
+                                if prev_file and os.path.exists(prev_file):
                                     try:
-                                        os.remove(item['path'])
+                                        os.remove(prev_file)
                                     except Exception:
                                         pass
-                                    if os.path.exists(norm_clip) and os.path.getsize(norm_clip) > 1000:
-                                        nf.write(f"file '{norm_clip.replace(chr(92), '/')}'\n")
-                            subprocess.run([ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', norm_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-                        shutil.rmtree(extract_dir, ignore_errors=True)
-                        shutil.rmtree(ordered_dir, ignore_errors=True)
+                                fname_only = f"VIDEO_FINAL_{uuid.uuid4().hex[:10]}.mp4"
+                                safe_final_path = os.path.join(static_delivery_dir, fname_only)
+                                shutil.move(out_mp4, safe_final_path)
 
-                        out_mp4 = joined_mp4
-
-                        if master_custom_audio is not None and os.path.exists(out_mp4):
-                            p_bar.progress(0.86, text="Aplicando sua locução principal...")
-                            master_custom_audio.seek(0)
-                            custom_aud_path = os.path.join(work_dir, "locucao_master" + os.path.splitext(master_custom_audio.name)[1])
-                            with open(custom_aud_path, "wb") as fa:
-                                shutil.copyfileobj(master_custom_audio, fa)
-                            dubbed_mp4 = os.path.join(work_dir, "VIDEO_VOZ_CUSTOM.mp4")
-                            res_mux = subprocess.run([
-                                ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path,
-                                '-map', '0:v:0', '-map', '1:a:0', '-c:v', 'copy',
-                                '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', dubbed_mp4
-                            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if res_mux.returncode == 0 and os.path.exists(dubbed_mp4) and os.path.getsize(dubbed_mp4) > 5000:
-                                if out_mp4 != dubbed_mp4 and os.path.exists(out_mp4):
-                                    os.remove(out_mp4)
-                                out_mp4 = dubbed_mp4
-
-                        if bg_music_file is not None and os.path.exists(out_mp4):
-                            p_bar.progress(0.92, text="Mixando trilha sonora de fundo...")
-                            bg_music_file.seek(0)
-                            bgm_path = os.path.join(work_dir, "bgm_track" + os.path.splitext(bg_music_file.name)[1])
-                            with open(bgm_path, "wb") as fb:
-                                shutil.copyfileobj(bg_music_file, fb)
-                            bgm_out_mp4 = os.path.join(work_dir, "VIDEO_COM_BGM.mp4")
-                            vol_float = round(bgm_vol_pct / 100.0, 3)
-                            has_main_aud = "Audio:" in subprocess.run([ffmpeg_exe, '-i', out_mp4], stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True).stderr
-                            if has_main_aud:
-                                cmd_bgm = [
-                                    ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
-                                    '-filter_complex', f"[1:a]volume={vol_float}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-                                    '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-movflags', '+faststart', bgm_out_mp4
+                                st.session_state["final_video_disk_path"] = safe_final_path
+                                st.session_state["final_video_static_url"] = f"app/static/entregas/{fname_only}"
+                                st.session_state["final_srt_text"] = srt_content
+                                st.session_state["discarded_count"] = len(discarded_list)
+                                st.session_state["missing_scenes_list"] = missing_scenes
+                                st.session_state["final_report"] = [
+                                    {
+                                        "original_name": r["original_name"],
+                                        "transcript": r["transcript"],
+                                        "matched_scene": (r.get("matched_scene_idx") + 1) if r.get("matched_scene_idx") is not None else "Extra",
+                                        "score": r.get("match_score", 0)
+                                    } for r in results
                                 ]
+                                # Reseta o file_uploader para despejar os 300MB-500MB do .ZIP da RAM antes de mostrar a tela de download!
+                                st.session_state["uploader_reset_id"] += 1
+                                gc.collect()
+                                st.rerun()
                             else:
-                                cmd_bgm = [
-                                    ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
-                                    '-filter_complex', f"[1:a]volume={vol_float}[aout]",
-                                    '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '192k', '-shortest', '-movflags', '+faststart', bgm_out_mp4
-                                ]
-                            res_bgm = subprocess.run(cmd_bgm, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if res_bgm.returncode == 0 and os.path.exists(bgm_out_mp4) and os.path.getsize(bgm_out_mp4) > 5000:
-                                if out_mp4 != bgm_out_mp4 and os.path.exists(out_mp4):
-                                    os.remove(out_mp4)
-                                out_mp4 = bgm_out_mp4
-
-                        if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
-                            p_bar.progress(0.96, text="Gravando legendas dinâmicas no vídeo...")
-                            subbed_mp4 = os.path.join(work_dir, "VIDEO_LEGENDADO.mp4")
-                            srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
-                            f_size = 15 if is_vertical else 18
-                            margin_v = 55 if is_vertical else 28
-                            sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
-                            res_sub = subprocess.run([
-                                ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter,
-                                '-c:v', 'libx264', '-preset', 'ultrafast', '-crf', '24', '-threads', '1',
-                                '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
-                            ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                            if res_sub.returncode == 0 and os.path.exists(subbed_mp4) and os.path.getsize(subbed_mp4) > 5000:
-                                if out_mp4 != subbed_mp4 and os.path.exists(out_mp4):
-                                    os.remove(out_mp4)
-                                out_mp4 = subbed_mp4
-                            else:
-                                st.warning("⚠️ Vídeo pronto, mas a fonte de legenda embutida não pôde ser aplicada neste servidor — baixe o arquivo .SRT abaixo!")
-
-                        p_bar.progress(1.0, text="Concluído!")
-                        if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
-                            prev_file = st.session_state.get("final_video_disk_path", "")
-                            if prev_file and os.path.exists(prev_file):
-                                try:
-                                    os.remove(prev_file)
-                                except Exception:
-                                    pass
-
-                            safe_final_path = os.path.join(delivery_root, f"Video_Final_{uuid.uuid4().hex[:10]}.mp4")
-                            shutil.move(out_mp4, safe_final_path)
-                            st.session_state["final_video_disk_path"] = safe_final_path
-                            st.session_state["final_srt_text"] = srt_content
-                            st.session_state["discarded_count"] = len(discarded_list)
-                            st.session_state["missing_scenes_list"] = missing_scenes
-                            st.session_state["final_report"] = [
-                                {
-                                    "original_name": r["original_name"],
-                                    "transcript": r["transcript"],
-                                    "matched_scene": (r.get("matched_scene_idx") + 1) if r.get("matched_scene_idx") is not None else "Extra",
-                                    "score": r.get("match_score", 0)
-                                } for r in results
-                            ]
-                        else:
-                            st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique os vídeos enviados.")
+                                st.error("❌ O FFmpeg não conseguiu gerar o arquivo final. Verifique os vídeos enviados.")
                 finally:
                     shutil.rmtree(work_dir, ignore_errors=True)
                     gc.collect()
@@ -1739,26 +1770,37 @@ with tab2:
         size_mb = os.path.getsize(final_disk_p) / (1024 * 1024)
         disc_n = st.session_state.get("discarded_count", 0)
         miss_sc = st.session_state.get("missing_scenes_list", [])
+        static_rel_url = st.session_state.get("final_video_static_url", "")
 
-        msg_extra = f" | 🧹 {disc_n} clipe(s) mudo(s)/duplicado(s) removido(s) automaticamente!" if disc_n > 0 else ""
-        st.success(f"✅ VÍDEO FINAL PRONTO! ({len(st.session_state.get('final_report', []))} cenas válidas — {size_mb:.1f} MB{msg_extra})")
+        msg_extra = f" | 🧹 {disc_n} clipe(s) mudo(s)/duplicado(s) removido(s)!" if disc_n > 0 else ""
+        st.success(f"✅ VÍDEO LONGO PRONTO! ({len(st.session_state.get('final_report', []))} cenas válidas — {size_mb:.1f} MB{msg_extra})")
 
         if miss_sc:
             st.warning(
-                f"💡 **Aviso útil:** As seguintes cenas do roteiro vieram mudas do Google Flow e foram omitidas (se quiser 100% completo, basta regerar apenas elas no Flow): **Cena(s) {', '.join(map(str, miss_sc))}**."
+                f"💡 **Aviso útil:** As seguintes cenas vieram mudas do Flow e foram omitidas: **Cena(s) {', '.join(map(str, miss_sc))}**."
             )
 
         dl_c1, dl_c2 = st.columns([2, 1])
         with dl_c1:
-            with open(final_disk_p, "rb") as stream_f:
-                st.download_button(
-                    f"💾 BAIXAR VÍDEO COMPLETO PRONTO ({size_mb:.1f} MB .MP4)",
-                    data=stream_f,
-                    file_name="VIDEO_FINAL_PRONTO.mp4",
-                    mime="video/mp4",
-                    type="primary",
-                    use_container_width=True
-                )
+            # Link HTML estático direto: 0 MB de uso na memória RAM do Python (nunca derruba vídeos de 11+ min!)
+            st.markdown(
+                f'''<a href="{static_rel_url}" download="VIDEO_FINAL_COMPLETO.mp4" target="_blank"
+                style="display:block;text-align:center;background:#16a34a;color:#ffffff;padding:13px 18px;
+                border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;margin-bottom:8px;">
+                ⚡ BAIXAR VÍDEO COMPLETO DIRETO DO DISCO ({size_mb:.1f} MB — ZERO RAM)
+                </a>''',
+                unsafe_allow_html=True
+            )
+            if size_mb <= 130.0:
+                if st.checkbox("Usar botão tradicional do Streamlit (caso ainda não tenha ativado o config.toml)"):
+                    with open(final_disk_p, "rb") as stream_f:
+                        st.download_button(
+                            f"💾 Baixar via Botão Alternativo ({size_mb:.1f} MB)",
+                            data=stream_f,
+                            file_name="VIDEO_FINAL_PRONTO.mp4",
+                            mime="video/mp4",
+                            use_container_width=True
+                        )
         with dl_c2:
             if st.session_state.get("final_srt_text"):
                 st.download_button(
@@ -1769,12 +1811,10 @@ with tab2:
                     use_container_width=True
                 )
 
-        if size_mb <= 50.0:
+        if size_mb <= 45.0:
             st.video(final_disk_p)
         else:
-            st.caption("💡 Como o vídeo tem mais de 50 MB, o reprodutor automático da tela foi pausado para proteger a memória RAM do servidor — clique no botão azul acima para salvar o arquivo direto no seu computador!")
-            if st.checkbox("▶️ Carregar pré-visualização na tela mesmo assim"):
-                st.video(final_disk_p)
+            st.caption("🛡️ Vídeo longo protegido: clique no botão verde acima para transferência direta pelo navegador sem usar memória RAM do servidor.")
 
         with st.expander("📋 Relatório do Pareamento Exclusivo Cena-a-Cena"):
             for i, r in enumerate(st.session_state.get("final_report", []), 1):
@@ -1784,7 +1824,7 @@ with tab3:
     st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
     st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts.")
 
-    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
+    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: Juiz de Fora vs Uberlândia: Qual a Verdadeira Capital do Interior?")
     seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
 
     if st.button("✨ GERAR TÍTULOS VIRAIS, DESCRIÇÃO COM CAPÍTULOS, TAGS E PROMPT DE CAPA", type="primary", use_container_width=True):
@@ -1814,4 +1854,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v2.4 (ANTI-MUDOS + AUTO-DNA DE ELENCO)
+# FIM DO ARQUIVO SAAS ULTIMATE v2.5 COMPLETO (STATIC ZERO-RAM + AUTO-DNA + ANTI-MUDOS)
