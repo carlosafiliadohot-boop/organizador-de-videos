@@ -95,14 +95,12 @@ check_saas_login()
 # =====================================================================================
 
 DEFAULT_CHAR_A = (
-    "52-year-old Brazilian rural father, tanned weathered skin, square jaw, clean-shaven cheeks with a thick "
-    "neatly trimmed dark-gray mustache, wearing a beige woven straw hat with a thin brown leather band and "
-    "a solid navy-blue cotton button-up shirt with sleeves rolled to the elbows"
+    "52-year-old Brazilian rural father, tanned skin, clean-shaven cheeks with thick dark-gray mustache, "
+    "beige straw hat and solid navy-blue button-up shirt with rolled sleeves"
 )
 DEFAULT_CHAR_B = (
-    "22-year-old Brazilian young woman, warm olive skin, oval face, expressive dark brown eyes, shoulder-length "
-    "defined dark brown curly hair worn loose, wearing a solid mustard-yellow ribbed t-shirt under a classic "
-    "medium-blue denim jacket, small silver stud earrings"
+    "22-year-old Brazilian young woman, warm olive skin, shoulder-length dark brown curly hair, "
+    "mustard-yellow ribbed t-shirt under a classic medium-blue denim jacket"
 )
 
 for k_def, v_def in {
@@ -112,8 +110,8 @@ for k_def, v_def in {
     "dna_char_a": DEFAULT_CHAR_A,
     "dna_char_b": DEFAULT_CHAR_B,
     "dna_single_char": "",
-    "voice_char_a": "Deep, gruff, protective 52-year-old rural male baritone voice (105 Hz), calm interior Minas Gerais cadence",
-    "voice_char_b": "Clear, bright, natural 22-year-old young female voice (210 Hz), expressive Brazilian cadence"
+    "voice_char_a": "52-year-old Brazilian male baritone voice (105 Hz), calm Minas Gerais accent",
+    "voice_char_b": "22-year-old Brazilian young female voice (210 Hz), natural expressive accent"
 }.items():
     if k_def not in st.session_state:
         st.session_state[k_def] = v_def
@@ -148,17 +146,13 @@ LANGUAGES = {
 
 STYLE_PRESETS = {
     "Cinematográfico Realista 4K": (
-        "Photorealistic 4K cinema footage, ARRI Alexa look, 50mm prime lens, shallow depth of field, "
-        "single continuous smooth camera shot, zero scene cuts, zero morphing, natural warm lighting. "
-        "Zero text overlays, zero banners, zero signs."
+        "Photorealistic 4K documentary footage, single continuous camera shot, natural daylight, zero text or signs on screen."
     ),
     "Cartoon 3D Pixar": (
-        "3D Pixar-style animated feature film look, vibrant colors, soft global illumination lighting, "
-        "single continuous camera shot, zero scene cuts, zero morphing, zero text, zero signs."
+        "3D Pixar-style animated film look, vibrant colors, soft lighting, single continuous shot, zero text on screen."
     ),
     "Boneco Palito 2D (Com Boné Azul)": (
-        "2D minimalist vector animation, clean flat illustration style, single continuous camera shot, "
-        "zero scene cuts, consistent simple white stick figure characters, expressive eyes, zero text, zero letters."
+        "2D flat vector animation, consistent white stick figure character wearing a blue cap, single continuous shot, zero text."
     ),
     "Personalizado (Definir abaixo)": ""
 }
@@ -167,9 +161,9 @@ STYLE_PRESETS = {
 def build_chrome_extension_zip():
     manifest_str = """{
   "manifest_version": 3,
-  "name": "Estúdio Pro — Auto-Enviador Google Flow",
-  "version": "1.0",
-  "description": "Dispara automaticamente todas as cenas do Estúdio Pro dentro do Google Flow.",
+  "name": "Estúdio Pro — Auto-Enviador Google Flow v2.0",
+  "version": "2.0",
+  "description": "Dispara automaticamente cenas em linha única para o Google Flow preservando 100% o idioma do áudio.",
   "permissions": ["activeTab", "scripting", "storage"],
   "host_permissions": ["https://labs.google/*"],
   "content_scripts": [
@@ -185,10 +179,10 @@ def build_chrome_extension_zip():
   let isRunning = false, stopRequested = false;
   const panel = document.createElement("div");
   panel.id = "estudio-pro-panel";
-  panel.style.cssText = "position:fixed;bottom:20px;right:20px;width:330px;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:12px;padding:14px;z-index:999999;font-family:system-ui,sans-serif;box-shadow:0 12px 30px rgba(0,0,0,0.55);font-size:13px;";
+  panel.style.cssText = "position:fixed;bottom:20px;right:20px;width:340px;background:#111827;color:#f9fafb;border:1px solid #374151;border-radius:12px;padding:14px;z-index:999999;font-family:system-ui,sans-serif;box-shadow:0 12px 30px rgba(0,0,0,0.55);font-size:13px;";
   panel.innerHTML = `
     <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:8px;">
-      <strong style="font-size:14px;color:#60a5fa;">🎬 Estúdio Pro — Auto Flow</strong>
+      <strong style="font-size:14px;color:#34d399;">🎬 Estúdio Pro — Auto Flow v2.0</strong>
       <button id="ep-min-btn" style="background:none;border:none;color:#9ca3af;cursor:pointer;font-size:16px;">—</button>
     </div>
     <div id="ep-body">
@@ -196,22 +190,26 @@ def build_chrome_extension_zip():
       <textarea id="ep-prompts" rows="5" placeholder="=== CENA 001 ===..." style="width:100%;box-sizing:border-box;background:#1f2937;color:#fff;border:1px solid #4b5563;border-radius:8px;padding:8px;font-size:12px;"></textarea>
       <div style="display:flex;justify-content:space-between;align-items:center;margin:8px 0;">
         <label style="font-size:12px;color:#d1d5db;">⏱️ Pausa entre cenas (seg):</label>
-        <input id="ep-delay" type="number" min="5" max="120" value="14" style="width:60px;background:#1f2937;color:#fff;border:1px solid #4b5563;border-radius:6px;padding:4px;text-align:center;"/>
+        <input id="ep-delay" type="number" min="6" max="120" value="16" style="width:60px;background:#1f2937;color:#fff;border:1px solid #4b5563;border-radius:6px;padding:4px;text-align:center;"/>
       </div>
       <div style="display:flex;gap:8px;margin-top:8px;">
-        <button id="ep-start" style="flex:1;background:#2563eb;color:#fff;border:none;border-radius:8px;padding:9px;font-weight:600;cursor:pointer;">🚀 Iniciar Fila</button>
+        <button id="ep-start" style="flex:1;background:#059669;color:#fff;border:none;border-radius:8px;padding:9px;font-weight:600;cursor:pointer;">🚀 Iniciar Fila v2.0</button>
         <button id="ep-stop" style="background:#dc2626;color:#fff;border:none;border-radius:8px;padding:9px 12px;font-weight:600;cursor:pointer;display:none;">⏹ Parar</button>
       </div>
-      <div id="ep-status" style="margin-top:8px;font-size:12px;color:#93c5fd;min-height:18px;">Pronto para enviar cenas.</div>
+      <div id="ep-status" style="margin-top:8px;font-size:12px;color:#93c5fd;min-height:18px;">Pronto (Modo Linha Única Anti-Corte).</div>
     </div>`;
   document.body.appendChild(panel);
   const bodyDiv = document.getElementById("ep-body");
   document.getElementById("ep-min-btn").onclick = () => { bodyDiv.style.display = bodyDiv.style.display === "none" ? "block" : "none"; };
+
   function parseScenes(raw) {
     if (!raw || !raw.trim()) return [];
-    const p = raw.split(/===\s*CENA\s*\d+\s*===/i).map(s => s.trim()).filter(Boolean);
-    return p.length > 0 ? p : [raw.trim()];
+    const p = raw.split(/===\s*CENA\s*\d+\s*===/i)
+      .map(s => s.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    return p.length > 0 ? p : [raw.replace(/[\r\n]+/g, " ").replace(/\s+/g, " ").trim()];
   }
+
   function findFlowInput() {
     const els = [...document.querySelectorAll("textarea"), ...document.querySelectorAll('[contenteditable="true"]'), ...document.querySelectorAll('[role="textbox"]')];
     for (const el of els) {
@@ -221,37 +219,44 @@ def build_chrome_extension_zip():
     }
     return null;
   }
-  function setNativeText(el, text) {
+
+  function setSingleLineText(el, cleanText) {
     el.focus();
     if (el.tagName === "TEXTAREA" || el.tagName === "INPUT") {
-      const setter = Object.getOwnPropertyDescriptor(window.HTMLTextAreaElement.prototype, "value")?.set;
-      if (setter) setter.call(el, text); else el.value = text;
+      const proto = el.tagName === "TEXTAREA" ? window.HTMLTextAreaElement.prototype : window.HTMLInputElement.prototype;
+      const setter = Object.getOwnPropertyDescriptor(proto, "value")?.set;
+      if (setter) setter.call(el, ""); else el.value = "";
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+      if (setter) setter.call(el, cleanText); else el.value = cleanText;
       el.dispatchEvent(new Event("input", { bubbles: true }));
       el.dispatchEvent(new Event("change", { bubbles: true }));
     } else {
-      el.innerHTML = "";
-      document.execCommand("insertText", false, text);
-      el.dispatchEvent(new InputEvent("input", { bubbles: true, data: text }));
+      document.execCommand("selectAll", false, null);
+      document.execCommand("delete", false, null);
+      document.execCommand("insertText", false, cleanText);
+      el.dispatchEvent(new InputEvent("input", { bubbles: true, inputType: "insertText", data: cleanText }));
     }
   }
+
   function triggerSubmit(inputEl) {
     const btn = [...document.querySelectorAll("button")].find(b => {
       if (b.id.startsWith("ep-") || b.disabled) return false;
-      const lb = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "")).toLowerCase();
+      const lb = ((b.innerText || "") + " " + (b.getAttribute("aria-label") || "") + " " + (b.textContent || "")).toLowerCase();
       return lb.includes("generate") || lb.includes("gerar") || lb.includes("create") || lb.includes("criar") || lb.includes("arrow_upward") || b.getAttribute("type") === "submit";
     });
     if (btn) { btn.click(); return; }
     inputEl.dispatchEvent(new KeyboardEvent("keydown", { key: "Enter", code: "Enter", keyCode: 13, which: 13, bubbles: true }));
   }
+
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   document.getElementById("ep-stop").onclick = () => { stopRequested = true; };
   document.getElementById("ep-start").onclick = async () => {
     if (isRunning) return;
     const scenes = parseScenes(document.getElementById("ep-prompts").value);
-    const delaySec = Math.max(5, parseInt(document.getElementById("ep-delay").value || "14", 10));
+    const delaySec = Math.max(6, parseInt(document.getElementById("ep-delay").value || "16", 10));
     const statusEl = document.getElementById("ep-status");
     if (!scenes.length) { statusEl.innerText = "⚠️ Cole os prompts primeiro!"; return; }
-    if (!findFlowInput()) { statusEl.innerText = "⚠️ Entre em um projeto do Flow onde aparece a caixa de texto!"; return; }
+    if (!findFlowInput()) { statusEl.innerText = "⚠️ Abra um projeto do Flow onde aparece a caixa de prompt!"; return; }
     isRunning = true; stopRequested = false;
     document.getElementById("ep-start").style.display = "none";
     document.getElementById("ep-stop").style.display = "inline-block";
@@ -259,9 +264,9 @@ def build_chrome_extension_zip():
       if (stopRequested) break;
       const box = findFlowInput();
       if (!box) { await sleep(4000); i--; continue; }
-      statusEl.innerText = `🎬 Enviando cena ${i + 1}/${scenes.length}...`;
-      setNativeText(box, scenes[i]);
-      await sleep(900);
+      statusEl.innerText = `🎬 Preenchendo cena ${i + 1}/${scenes.length} completa...`;
+      setSingleLineText(box, scenes[i]);
+      await sleep(1400);
       triggerSubmit(box);
       if (i < scenes.length - 1 && !stopRequested) {
         for (let s = delaySec; s > 0; s--) {
@@ -278,18 +283,18 @@ def build_chrome_extension_zip():
   };
 })();"""
     readme_str = (
-        "COMO INSTALAR A EXTENSÃO VIP ESTÚDIO PRO NO CHROME (15 SEGUNDOS):\n"
-        "1. Extraia este arquivo .ZIP em uma pasta no seu computador.\n"
-        "2. Abra o Chrome (ou Edge/Brave), digite chrome://extensions na barra de endereço e aperte Enter.\n"
-        "3. Ative a chave 'Modo do desenvolvedor' no canto superior direito.\n"
-        "4. Clique em 'Carregar sem compactação' e selecione a pasta extraída (Extensao_Estudio_Pro_Flow).\n"
-        "5. Abra o Google Flow pelo botão do Estúdio: o painel 'Estúdio Pro — Auto Flow' aparecerá no canto inferior direito!"
+        "COMO ATUALIZAR PARA A EXTENSÃO VIP v2.0 NO CHROME:\n"
+        "1. Extraia este .ZIP numa pasta nova no seu computador.\n"
+        "2. Abra chrome://extensions no navegador e REMOVA a versão 1.0 antiga.\n"
+        "3. Clique em 'Carregar sem compactação' e selecione a nova pasta extraída.\n"
+        "4. Recarregue a página do Google Flow (F5) — o painel agora mostrará 'Auto Flow v2.0' em verde!\n"
+        "IMPORTANTE NO GOOGLE FLOW: Use o modelo Veo 3 (com áudio ativo) e deixe a varinha de 'Expandir/Reescrever comando' DESATIVADA."
     )
     mem_zip = io.BytesIO()
     with zipfile.ZipFile(mem_zip, "w", zipfile.ZIP_DEFLATED) as zf:
-        zf.writestr("Extensao_Estudio_Pro_Flow/manifest.json", manifest_str)
-        zf.writestr("Extensao_Estudio_Pro_Flow/content.js", content_js_str)
-        zf.writestr("Extensao_Estudio_Pro_Flow/COMO_INSTALAR.txt", readme_str)
+        zf.writestr("Extensao_Estudio_Pro_Flow_v2/manifest.json", manifest_str)
+        zf.writestr("Extensao_Estudio_Pro_Flow_v2/content.js", content_js_str)
+        zf.writestr("Extensao_Estudio_Pro_Flow_v2/COMO_INSTALAR.txt", readme_str)
     return mem_zip.getvalue()
 
 def fix_pronunciation(text, lang_label):
@@ -333,22 +338,11 @@ def fix_pronunciation(text, lang_label):
         t = re.sub(r'(\d+)\s*km\b', r'\1 kilometers', t, flags=re.IGNORECASE)
     return re.sub(r'\s+', ' ', t).strip()
 
-def get_strict_voice_lock(gender_choice, lang_label, custom_voice_desc=""):
-    lang_en = LANGUAGES[lang_label]["name_en"]
-    extra = f" Specific vocal signature: {custom_voice_desc.strip()}." if custom_voice_desc.strip() else ""
+def get_compact_voice_profile(gender_choice, custom_voice_desc=""):
+    extra = f", {custom_voice_desc.strip()}" if custom_voice_desc.strip() else ""
     if "Masculina" in gender_choice:
-        return (
-            f"[STRICT ACOUSTIC VOICEPRINT LOCK: Off-screen studio narration by the EXACT SAME 35-year-old male narrator "
-            f"across all scenes. Vocal profile: warm chest-resonant baritone (115 Hz fundamental pitch), crystal-clear native {lang_en}, "
-            f"steady 140 WPM documentary cadence, close-mic Neumann U87 sound, 0.3s clean silence before speaking, ZERO whispers or sighs, "
-            f"ZERO background music.{extra} Even if women, children, or elders appear on screen, the voice MUST remain this exact 35-year-old man.]"
-        )
-    return (
-        f"[STRICT ACOUSTIC VOICEPRINT LOCK: Off-screen studio narration by the EXACT SAME 32-year-old female narrator "
-        f"across all scenes. Vocal profile: warm smooth mezzo-soprano (195 Hz fundamental pitch), crystal-clear native {lang_en}, "
-        f"steady 140 WPM documentary cadence, close-mic Neumann U87 sound, 0.3s clean silence before speaking, ZERO whispers or sighs, "
-        f"ZERO background music.{extra} Even if men, children, or elders appear on screen, the voice MUST remain this exact 32-year-old woman.]"
-    )
+        return f"Same 35-year-old male documentary narrator (warm deep baritone 115 Hz, clean studio mic{extra})"
+    return f"Same 32-year-old female documentary narrator (warm smooth mezzo-soprano 195 Hz, clean studio mic{extra})"
 
 def clean_markdown(txt):
     txt = re.sub(r"<think>.*?</think>", "", txt, flags=re.DOTALL).strip()
@@ -459,11 +453,9 @@ def analyze_character_photo(uploaded_img, api_key):
 
     b64_data = base64.b64encode(img_bytes).decode("utf-8")
     vision_prompt = (
-        "Analyze this character image and write a forensic, ultra-specific physical and clothing description in ONE concise "
-        "English sentence (40 to 60 words) designed to lock 100% visual identity across AI video scenes. "
-        "Include: exact apparent age, ethnicity/skin tone, face shape, eye details, exact hairstyle/color, exact facial hair "
-        "(clean-shaven, mustache only, or beard length), headwear if any, and exact clothing colors, fabrics, collar/sleeve details, "
-        "and accessories. Output ONLY the English description without intro text."
+        "Analyze this character image and write a concise physical and clothing description in ONE English sentence "
+        "(30 to 45 words) to lock visual identity across AI video scenes: apparent age, skin tone, hair, facial hair, "
+        "headwear, and exact outfit colors. Output ONLY the single English sentence."
     )
 
     last_err = ""
@@ -481,19 +473,19 @@ def analyze_character_photo(uploaded_img, api_key):
                             {"type": "image_url", "image_url": {"url": f"data:{mime_type};base64,{b64_data}"}}
                         ]}],
                         "temperature": 0.1,
-                        "max_tokens": 300
+                        "max_tokens": 220
                     },
                     timeout=45
                 )
                 if r_v.status_code == 200:
                     desc = clean_markdown(r_v.json()["choices"][0]["message"]["content"])
                     if len(desc) >= 20:
-                        return desc, None
+                        return re.sub(r'\s+', ' ', desc).strip(), None
                 else:
                     last_err = f"{v_mod}: HTTP {r_v.status_code}"
             except Exception as ex:
                 last_err = str(ex)
-        return None, f"Não foi possível ler a imagem ({last_err}). Verifique sua chave Groq."
+        return None, f"Não foi possível ler a imagem ({last_err})."
 
     for model_id in ["gemini-2.5-flash", "gemini-2.0-flash"]:
         try:
@@ -503,7 +495,7 @@ def analyze_character_photo(uploaded_img, api_key):
             if r_g.status_code == 200:
                 desc = clean_markdown(r_g.json()["candidates"][0]["content"]["parts"][0]["text"])
                 if len(desc) >= 20:
-                    return desc, None
+                    return re.sub(r'\s+', ' ', desc).strip(), None
             else:
                 last_err = f"HTTP {r_g.status_code}"
         except Exception as ex:
@@ -569,7 +561,7 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
                 spoken_piece = f"Trecho narrado da cena {i+1}"
             t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
             t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
-            blocks.append(f"[{t1} - {t2}]\n[CENA: Single continuous cinematic shot illustrating: {spoken_piece}, characters with mouths closed in silence]\nLOCUÇÃO: {spoken_piece}")
+            blocks.append(f"[{t1} - {t2}]\n[CENA: Single continuous cinematic shot illustrating: {spoken_piece}, characters silent]\nLOCUÇÃO: {spoken_piece}")
     finally:
         shutil.rmtree(work_dir, ignore_errors=True)
     return "\n\n".join(blocks), dur, num_chunks
@@ -578,50 +570,49 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
     lang_en = LANGUAGES[lang_label]["name_en"]
     if "Diálogo" in audio_mode:
         prompt_text = (
-            f"You are a master screenwriter creating an authentic, viral, high-retention dialogue video.\n"
+            f"You are a master screenwriter creating an authentic, high-retention dialogue video.\n"
             f"Story / Situation: '{title}'\n"
             f"Video Framing: {aspect_framing}\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n"
-            f"Character A (Fixed Identity): {char_a_desc}\n"
-            f"Character B (Fixed Identity): {char_b_desc}\n\n"
-            f"CRITICAL CONTINUITY, NATURALNESS & VISUAL LOCK RULES:\n"
-            f"1. STRICT PROGRESSIVE MEMORY (ZERO REPEATED QUESTIONS): Track every detail revealed in earlier scenes! Never repeat an already-answered question in later scenes. Advance logically.\n"
-            f"2. 100% IDIOMATIC NATIVE SPEECH: Write authentic everyday {lang_en}. Every line MUST have strictly 12 to 17 words.\n"
-            f"3. ONE SPEAKER PER 8-SECOND SCENE: Alternate between PERSONAGEM A and PERSONAGEM B.\n"
-            f"4. FIXED SETTING LOCK: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes, framed specifically for {aspect_framing}.\n\n"
-            f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, no intro/outro):\n"
+            f"Character A: {char_a_desc}\n"
+            f"Character B: {char_b_desc}\n\n"
+            f"RULES:\n"
+            f"1. ZERO REPEATED QUESTIONS: Track details revealed in earlier scenes and advance logically.\n"
+            f"2. NATIVE SPEECH: Write authentic everyday {lang_en}, strictly 12 to 17 words per scene.\n"
+            f"3. ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B.\n"
+            f"4. FIXED SETTING: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes.\n\n"
+            f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: {aspect_framing} medium two-shot in the exact same room, Character A speaking expressively while Character B listens silently, zero text]\n"
-            f"PERSONAGEM A: Authentic natural line in {lang_en} (12-17 words, zero abbreviations)."
+            f"[CENA: Medium two-shot in the same room in English, active speaker talking while listener is silent, zero text]\n"
+            f"PERSONAGEM A: Authentic line in {lang_en} (12-17 words, zero abbreviations)."
         )
     else:
         if single_char_desc.strip():
-            char_hint = f"the exact protagonist ({single_char_desc.strip()}) exploring the scenery with mouth closed in silence"
+            char_hint = f"the protagonist ({single_char_desc.strip()}) exploring the real location silently"
         elif "Palito" in style_choice:
-            char_hint = "the white stick figure wearing a solid royal-blue baseball cap exploring the scenery"
+            char_hint = "the white stick figure wearing a blue cap exploring the real location"
         elif "Cartoon" in style_choice:
-            char_hint = "the 3D character wearing a solid royal-blue baseball cap and blue jeans exploring the scenery"
+            char_hint = "the 3D character wearing a blue cap exploring the real location"
         else:
-            char_hint = "pure cinematic documentary B-roll of landscapes, nature, or architecture (NO TV host or studio presenter)"
+            char_hint = "specific cinematic documentary footage of the real named city, landmark, or subject"
 
         prompt_text = (
             f"You are a rigorous, fact-checked documentary researcher and scriptwriter.\n"
             f"Topic / Title: '{title}'\n"
-            f"Video Framing: {aspect_framing}\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
-            f"STRICT FACTUAL ACCURACY & PRONUNCIATION RULES:\n"
-            f"1. 100% VERIFIED REAL FACTS ONLY: Never invent local contests, fake dates, or guessed weights.\n"
-            f"2. PRONUNCIATION-FRIENDLY: Write ALL numbers, units, and acronyms spelled out in full words in {lang_en}.\n"
-            f"3. TIMING: Every LOCUÇÃO MUST have strictly 14 to 18 words in {lang_en}. Scene {num_scenes} ends with a Call-to-Action.\n"
-            f"4. CLEAN VISUALS: Every [CENA: ...] must be a single continuous shot ({aspect_framing}) in English featuring {char_hint}, zero text, mouths closed.\n\n"
+            f"RULES:\n"
+            f"1. 100% VERIFIED REAL FACTS ONLY.\n"
+            f"2. SPELL OUT ACRONYMS AND UNITS in full words in {lang_en}.\n"
+            f"3. TIMING: Every LOCUÇÃO MUST have strictly 14 to 18 words in {lang_en}.\n"
+            f"4. SPECIFIC VISUALS IN ENGLISH: Every [CENA: ...] MUST explicitly name the real city/place/landmark in Brazil or the world in English ({char_hint}), zero text, mouths closed.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: {aspect_framing} single continuous shot in English, no text/signs, mouths closed]\n"
-            f"LOCUÇÃO: Verified narration in {lang_en} (14-18 words, zero abbreviations)."
+            f"[CENA: Specific continuous shot in English naming the real location, no text, mouths closed]\n"
+            f"LOCUÇÃO: Verified narration in {lang_en} (14-18 words)."
         )
 
     temp_val = 0.45 if "Diálogo" in audio_mode else 0.2
-    sys_msg = "Output ONLY the requested formatted script scenes. Maintain strict continuity and natural expressions."
+    sys_msg = "Output ONLY the requested formatted script scenes."
     out, err = call_llm_text(sys_msg, prompt_text, api_key, temperature=temp_val)
     if err:
         return "", err
@@ -645,16 +636,16 @@ def generate_seo_and_thumbnail_kit(title, script_text, lang_label, aspect_label,
         f"Style: {style_choice}\n"
         f"Character DNA: {char_dna}\n\n"
         f"Deliver cleanly organized with these exact headings:\n"
-        f"1. 🔥 5 TÍTULOS MAGNÉTICOS DE ALTO CTR (curiosity-driven, punchy)\n"
-        f"2. 📝 DESCRIÇÃO OTIMIZADA COM SEO + CAPÍTULOS (TIMESTAMPS starting at 00:00)\n"
-        f"3. 🏷️ 20 TAGS DE ALTO VOLUME (comma-separated in a single line ready to copy)\n"
-        f"4. 🖼️ PROMPT PRONTO PARA CAPA / THUMBNAIL ({orient}, in English, ultra-vivid facial expression/visual hook, matching exact Character DNA, zero gibberish text)"
+        f"1. 🔥 5 TÍTULOS MAGNÉTICOS DE ALTO CTR\n"
+        f"2. 📝 DESCRIÇÃO OTIMIZADA COM SEO + CAPÍTULOS (00:00)\n"
+        f"3. 🏷️ 20 TAGS DE ALTO VOLUME (comma-separated)\n"
+        f"4. 🖼️ PROMPT PRONTO PARA CAPA / THUMBNAIL ({orient}, in English, vivid visual hook, zero gibberish text)"
     )
-    sys_msg = "You are a YouTube & TikTok viral growth strategist. Deliver ready-to-copy metadata."
+    sys_msg = "You are a YouTube & TikTok viral growth strategist."
     return call_llm_text(sys_msg, seo_prompt, api_key, temperature=0.5)
 
 # ================= AUTO-FATIADOR DE ROTEIROS LONGOS EM CENAS DE 8s =================
-def split_spoken_into_8s_chunks(spoken_text, max_words=19):
+def split_spoken_into_8s_chunks(spoken_text, max_words=18):
     words_total = spoken_text.split()
     if len(words_total) <= max_words + 2:
         return [spoken_text.strip()]
@@ -697,7 +688,7 @@ def split_spoken_into_8s_chunks(spoken_text, max_words=19):
 
     merged = []
     for ch in raw_chunks:
-        if merged and (len(ch.split()) < 7 or len(merged[-1].split()) < 8) and (len(merged[-1].split()) + len(ch.split()) <= 22):
+        if merged and (len(ch.split()) < 7 or len(merged[-1].split()) < 8) and (len(merged[-1].split()) + len(ch.split()) <= 21):
             merged[-1] = f"{merged[-1]} {ch}".strip()
         else:
             merged.append(ch)
@@ -705,7 +696,7 @@ def split_spoken_into_8s_chunks(spoken_text, max_words=19):
 
 def clean_visual_for_flow(vis_text):
     if not vis_text:
-        return "Cinematic documentary B-roll matching the narration, natural daylight, zero on-screen text"
+        return "Aerial drone shot of Brazilian Minas Gerais city skyline, avenues, and green hills in daylight"
     v = re.sub(
         r'(?:texto|placar)[^,\]]*?(?:na tela|piscando|animado)\s*:?\s*["“”]?.*?["“”]?(?:$|\+|/)',
         '',
@@ -713,11 +704,10 @@ def clean_visual_for_flow(vis_text):
         flags=re.IGNORECASE
     ).strip(" /+-:,")
     if len(v) < 10:
-        return "Sweeping aerial drone view of iconic urban skyline and green hills in golden sunlight, zero text"
+        return "Aerial drone view of Brazilian city avenues, skyscrapers, and green hills in Minas Gerais, Brazil"
     return v
 
 def extract_scenes_for_prompts(raw_script, lang_label):
-    # Desgruda marcações [CENA: ...]LOCUÇÃO: que estejam coladas na mesma linha
     pre = re.sub(r'(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', raw_script.strip(), flags=re.IGNORECASE)
     pre = re.sub(
         r'((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)',
@@ -728,11 +718,11 @@ def extract_scenes_for_prompts(raw_script, lang_label):
 
     blocks = re.split(r'\n\s*\n', pre.strip())
     camera_angles = [
-        "Wide cinematic aerial drone establishing shot",
-        "Smooth street-level gimbal tracking shot",
-        "Medium cinematic architectural and urban lifestyle view",
-        "High-altitude sweeping panoramic drone movement",
-        "Dynamic cinematic push-in shot with natural depth of field"
+        "Aerial drone establishing shot",
+        "Smooth street-level gimbal shot",
+        "Wide architectural and urban view",
+        "High panoramic drone shot",
+        "Cinematic tracking shot"
     ]
 
     scenes = []
@@ -769,12 +759,12 @@ def extract_scenes_for_prompts(raw_script, lang_label):
         if not full_spoken and not visual:
             continue
 
-        base_vis = visual if visual else "Cinematic 4K documentary B-roll matching the narration, zero text on screen"
-        chunks = split_spoken_into_8s_chunks(full_spoken, max_words=19) if full_spoken else [""]
+        base_vis = visual if visual else "Aerial drone shot of Brazilian city skyline and avenues in daylight"
+        chunks = split_spoken_into_8s_chunks(full_spoken, max_words=18) if full_spoken else [""]
 
         for c_idx, ch_txt in enumerate(chunks):
             cam_prefix = camera_angles[c_idx % len(camera_angles)]
-            varied_vis = f"{cam_prefix} — {base_vis}" if len(chunks) > 1 else base_vis
+            varied_vis = f"{cam_prefix} of {base_vis}" if len(chunks) > 1 else base_vis
             scenes.append({"visual": varied_vis, "spoken": ch_txt, "speaker": speaker_tag})
 
     return scenes
@@ -898,14 +888,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo em 3 minutos (Guia para Iniciantes)"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como criar seu vídeo completo sem cortes de idioma"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
-        "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)** com seu Google, clique em *Create API Key*, copie o código `gsk_...` e cole no campo ao lado.\n"
-        "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** Escolha **16:9 (YouTube)** ou **9:16 (TikTok/Shorts/Reels)**. Se você colar um roteiro grande de 10-12 minutos, o sistema **fatia sozinho em ~90 cenas de 8 segundos**!\n"
-        "3. **Dispare no Automático para o Google Flow:** Baixe a **Extensão Chrome VIP** abaixo, clique em **Abrir Google Flow em Janela Lateral**, cole seus prompts no painel azul e deixe ela enviar todas as cenas sozinha!\n"
-        "4. **Receba Tudo Pronto (Abas 2 e 3):** Suba o `.ZIP` na **Aba 2** para juntar por voz, adicionar música de fundo e baixar o `.MP4` + legenda `.SRT`. Na **Aba 3**, gere títulos virais, descrição com capítulos e prompt da capa!"
+        "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
+        "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** Prompts agora saem em **Linha Única Anti-Corte** para o Google Flow respeitar 100% o cenário e o idioma selecionado.\n"
+        "3. **No Google Flow:** Use o modelo **Veo 3 (com Áudio ligado)**, deixe a opção de **Expandir/Reescrever prompt (varinha)** desativada e use a **Extensão VIP v2.0**!\n"
+        "4. **Montagem & SEO (Abas 2 e 3):** Suba o `.ZIP` na **Aba 2** para ordenar pela fala em português e baixar o `.MP4` + `.SRT`."
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -917,7 +907,7 @@ with col_top2:
         ["🖥️ 16:9 Horizontal (YouTube Longo)", "📱 9:16 Vertical (TikTok / Shorts / Reels)"]
     )
     is_vertical = ("9:16" in aspect_ratio)
-    aspect_prompt_tag = "Vertical 9:16 portrait smartphone framing (720x1280), centered vertical subject composition" if is_vertical else "Horizontal 16:9 widescreen cinema framing (1280x720)"
+    aspect_short = "Vertical 9:16 portrait video" if is_vertical else "Horizontal 16:9 widescreen video"
 
 with col_top3:
     if is_admin:
@@ -959,9 +949,9 @@ with tab1:
         )
     with cf_btn2:
         st.download_button(
-            "🧩 Baixar Extensão Chrome VIP (Envia Cenas pro Flow no Automático)",
+            "🧩 Baixar Extensão Chrome VIP v2.0 (Linha Única — Áudio PT-BR Garantido)",
             data=build_chrome_extension_zip(),
-            file_name="Extensao_VIP_Estudio_Pro_Flow.zip",
+            file_name="Extensao_VIP_Estudio_Pro_Flow_v2.zip",
             mime="application/zip",
             use_container_width=True
         )
@@ -1093,7 +1083,7 @@ with tab1:
             else:
                 with st.spinner(f"Criando roteiro de {total_scenes_calc} cenas ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})..."):
                     script_out, err_msg = generate_ai_script(
-                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_prompt_tag,
+                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_short,
                         st.session_state.get("dna_char_a", ""), st.session_state.get("dna_char_b", ""),
                         st.session_state.get("dna_single_char", ""), active_api_key
                     )
@@ -1110,7 +1100,7 @@ with tab1:
             height=260
         )
 
-    if st.button("✨ FATIAR EM CENAS DE 8s & GERAR TODOS OS PROMPTS BLINDADOS", type="primary", use_container_width=True):
+    if st.button("✨ FATIAR EM CENAS DE 8s & GERAR PROMPTS EM LINHA ÚNICA (SEM CORTE DE IDIOMA)", type="primary", use_container_width=True):
         if not script_for_prompts.strip():
             st.warning("Gere ou cole um roteiro primeiro.")
         else:
@@ -1118,13 +1108,14 @@ with tab1:
             scenes = extract_scenes_for_prompts(script_for_prompts, selected_lang)
             visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
             lang_en_name = LANGUAGES[selected_lang]["name_en"]
-            ref_tag = "Match 100% the uploaded reference character image(s) in face, hair, and exact outfit. " if has_ref_image else ""
+            ref_tag = "Match uploaded reference character image(s). " if has_ref_image else ""
 
             est_mins = round((len(scenes) * 8) / 60.0, 1)
-            st.success(f"✅ {len(scenes)} Cenas de 8s prontas (~{est_mins} min totais) no formato {'9:16 Vertical' if is_vertical else '16:9 Horizontal'}!")
+            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Idioma travado em {selected_lang}!")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
+                clean_spoken = sc["spoken"].replace('"', "'").strip()
                 if "Modo 2" in audio_mode:
                     is_a = (sc["speaker"] != "B")
                     active_char = "Character A" if is_a else "Character B"
@@ -1132,47 +1123,43 @@ with tab1:
                     active_voice = st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")
                     dna_a_txt = st.session_state.get("dna_char_a", DEFAULT_CHAR_A)
                     dna_b_txt = st.session_state.get("dna_char_b", DEFAULT_CHAR_B)
-                    p_box = (
-                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
-                        f"[VISUAL & WARDROBE DNA LOCK: {visual_anchor} {ref_tag}"
-                        f"Character A MUST ALWAYS be: {dna_a_txt} (NEVER change shirt color, hat, or facial hair). "
-                        f"Character B MUST ALWAYS be: {dna_b_txt} (NEVER change hairstyle, face, or outfit colors). "
-                        f"Single continuous 8-second camera shot, same exact room lighting, zero cuts, zero text on screen.]\n"
-                        f"SCENE ACTION: {sc['visual']}. ONLY {active_char} moves their mouth with natural realistic lip-sync while {silent_char} keeps mouth completely closed listening.\n"
-                        f"[DIALOGUE VOICEPRINT LOCK: {active_char} speaks with {active_voice}, native {lang_en_name}. "
-                        f"Start with 0.3s clean silence, ZERO whispers before speaking, ZERO background music.] "
-                        f"{active_char} says clearly in {lang_en_name}: \"{sc['spoken']}\""
+                    raw_p = (
+                        f"{aspect_short}. {visual_anchor} {ref_tag}"
+                        f"Character A: {dna_a_txt}. Character B: {dna_b_txt}. "
+                        f"Scene action: {sc['visual']}. ONLY {active_char} moves mouth with natural lip-sync while {silent_char} listens silently. "
+                        f"AUDIO RULE (MANDATORY {lang_en_name} ONLY, ZERO ENGLISH, zero music): "
+                        f"{active_char} ({active_voice}) speaks clearly in native {lang_en_name}: \"{clean_spoken}\""
                     )
                 elif "Modo 3" in audio_mode and mute_flow_for_custom:
                     single_dna = st.session_state.get("dna_single_char", "").strip()
-                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
-                    p_box = (
-                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
-                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
-                        f"CRITICAL RULE: Single continuous 8-second shot, zero cuts. All characters keep mouths closed in silence. Zero text on screen.]\n"
-                        f"SCENE ACTION: {sc['visual']}.\n"
-                        f"[AUDIO LOCK: Completely silent ambient track, zero speech, zero narration, zero music.]"
+                    char_clause = f"Protagonist: {single_dna}. " if single_dna else ""
+                    raw_p = (
+                        f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
+                        f"Scene action: {sc['visual']}. People keep mouths closed in silence. "
+                        f"AUDIO RULE: Silent ambient sound only, zero speech, zero narration, zero music."
                     )
                 else:
                     single_dna = st.session_state.get("dna_single_char", "").strip()
-                    char_clause = f"Protagonist DNA Lock: {single_dna}. " if single_dna else ""
-                    voice_anchor = get_strict_voice_lock(voice_choice, selected_lang, custom_voice_timbre)
-                    p_box = (
-                        f"[ASPECT RATIO & FRAMING: {aspect_prompt_tag}.]\n"
-                        f"[VISUAL STYLE & CAMERA LOCK: {visual_anchor} {ref_tag}{char_clause}"
-                        f"CRITICAL RULE: Single continuous 8-second camera shot, zero cuts, zero morphing. "
-                        f"All people on screen MUST keep their mouths closed and silent (strictly no lip-sync). Zero text, zero signs, zero banners.]\n"
-                        f"SCENE ACTION: {sc['visual']}.\n"
-                        f"{voice_anchor} Narrator says clearly in {lang_en_name}: \"{sc['spoken']}\""
+                    char_clause = f"Protagonist: {single_dna}. " if single_dna else ""
+                    voice_short = get_compact_voice_profile(voice_choice, custom_voice_timbre)
+                    raw_p = (
+                        f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
+                        f"Scene action: {sc['visual']}. Any people on screen keep mouths closed (no lip-sync). "
+                        f"AUDIO RULE (MANDATORY {lang_en_name} SPEECH ONLY, ZERO ENGLISH, no background music): "
+                        f"Off-screen narrator ({voice_short}) speaks in native {lang_en_name}: \"{clean_spoken}\""
                     )
 
+                # Garante matematicamente ZERO quebras de linha dentro do prompt da cena
+                p_box = re.sub(r'[\r\n]+', ' ', raw_p)
+                p_box = re.sub(r'\s+', ' ', p_box).strip()
+
                 all_prompts_text.append(f"=== CENA {idx:03d} ===\n{p_box}\n")
-                with st.expander(f"🎬 Cena {idx:03d} ({len(sc['spoken'].split())} palavras) — \"{sc['spoken'][:65]}...\"", expanded=(idx <= 3)):
+                with st.expander(f"🎬 Cena {idx:03d} ({len(clean_spoken.split())} palavras) — \"{clean_spoken[:65]}...\"", expanded=(idx <= 3)):
                     st.code(p_box, language="text")
 
             full_txt_joined = "\n".join(all_prompts_text)
             st.download_button("📥 Baixar Todos os Prompts (.TXT)", data=full_txt_joined, file_name="Prompts_Flow.txt", use_container_width=True)
-            with st.expander("📋 Ou copie todos os prompts de uma vez para colar na Extensão VIP"):
+            with st.expander("📋 Ou copie todos os prompts de uma vez para colar na Extensão VIP v2.0"):
                 st.code(full_txt_joined, language="text")
 
 with tab2:
@@ -1379,7 +1366,7 @@ with tab2:
                             if res_sub.returncode == 0 and os.path.exists(subbed_mp4) and os.path.getsize(subbed_mp4) > 5000:
                                 out_mp4 = subbed_mp4
                             else:
-                                st.warning("⚠️ Seu vídeo foi gerado com sucesso, mas a fonte de legenda embutida não pôde ser aplicada neste servidor — baixe o arquivo .SRT abaixo!")
+                                st.warning("⚠️ Vídeo pronto, mas a fonte de legenda embutida não pôde ser aplicada neste servidor — baixe o arquivo .SRT abaixo!")
 
                         p_bar.progress(1.0, text="Concluído!")
                         if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
@@ -1426,7 +1413,7 @@ with tab2:
 
 with tab3:
     st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
-    st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts usando o mesmo DNA dos seus personagens.")
+    st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts.")
 
     seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: Juiz de Fora vs Uberlândia: Qual a Verdadeira Capital do Interior?")
     seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
@@ -1458,4 +1445,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE COM AUTO-FATIADOR
+# FIM DO ARQUIVO SAAS v2.0 LINHA UNICA
