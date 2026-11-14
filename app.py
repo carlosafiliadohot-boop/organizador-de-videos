@@ -385,12 +385,12 @@ def get_compact_voice_profile(gender_choice, custom_voice_desc=""):
     if "Masculina" in gender_choice:
         return (
             f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult 35-year-old male studio narrator "
-            f"(deep chest-resonant baritone 115 Hz, Neumann mic{extra}; ZERO silence, ZERO instrumental-only output, "
+            f"(deep chest-resonant baritone 115 Hz, Neumann mic{extra}; ZERO silence, ZERO extra improvised words, "
             f"NEVER use female or child voices)"
         )
     return (
         f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult 32-year-old female studio narrator "
-        f"(smooth mezzo-soprano 195 Hz, Neumann mic{extra}; ZERO silence, ZERO instrumental-only output, "
+        f"(smooth mezzo-soprano 195 Hz, Neumann mic{extra}; ZERO silence, ZERO extra improvised words, "
         f"NEVER use male or child voices)"
     )
 
@@ -670,14 +670,14 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"Topic / Story Title: '{title}'\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
             f"CRITICAL STORYTELLING, CHARACTER HAIR/OUTFIT LOCK & NATIVE NAMES RULES:\n"
-            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background (e.g., tending sheep BEFORE going to battlefield); middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action. NEVER place battlefield action before peaceful introduction, and NEVER place confrontation after victory!\n"
-            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character (e.g., '14-year-old boy David with short curly dark-brown hair and beige linen tunic') and repeat those EXACT traits in every [CENA: ...] where they appear (never switch between straight, curly, or red hair!). Visuals feature {char_hint}.\n"
+            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background; middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action. NEVER place battlefield action before peaceful introduction, and NEVER place confrontation after victory!\n"
+            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character and repeat those EXACT traits in every [CENA: ...] where they appear. Visuals feature {char_hint}.\n"
             f"3. 100% NATIVE NAMES IN {lang_en}: In LOCUÇÃO, ALWAYS write proper names translated into {lang_en} (e.g., write 'Davi' and 'Golias' in Portuguese, NEVER 'David' or 'Goliath').\n"
-            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (13 to 18 words) distinct and progressive so audio alignment is 100% unmistakable. All characters on screen keep mouths closed.\n\n"
+            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (14 to 18 words) a complete, natural phrase so audio alignment is 100% unmistakable and Veo never improvises filler words. All characters on screen keep mouths closed.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
             f"[CENA: Single continuous shot in English repeating exact character hair/gender/period outfit and action, mouths closed, zero text]\n"
-            f"LOCUÇÃO: Engaging narration in {lang_en} using native translated names (13-18 words)."
+            f"LOCUÇÃO: Engaging narration in {lang_en} using native translated names (14-18 words)."
         )
 
     temp_val = 0.35 if "Diálogo" in audio_mode else 0.22
@@ -757,7 +757,7 @@ def split_spoken_into_8s_chunks(spoken_text, max_words=18):
 
     merged = []
     for ch in raw_chunks:
-        if merged and (len(ch.split()) < 7 or len(merged[-1].split()) < 8) and (len(merged[-1].split()) + len(ch.split()) <= 21):
+        if merged and (len(ch.split()) < 8 or len(merged[-1].split()) < 9) and (len(merged[-1].split()) + len(ch.split()) <= 22):
             merged[-1] = f"{merged[-1]} {ch}".strip()
         else:
             merged.append(ch)
@@ -785,6 +785,28 @@ def looks_non_english_visual(text):
 def extract_scenes_for_prompts(raw_script, lang_label):
     if not raw_script or not raw_script.strip():
         return []
+
+    # Suporte 1:1 se o usuário colar o próprio arquivo Prompts_Flow.txt (=== CENA 001 === ...: "fala")
+    if re.search(r'===\s*CENA\s*\d+\s*===', raw_script, re.IGNORECASE):
+        prompt_parts = re.split(r'===\s*CENA\s*\d+\s*===', raw_script, flags=re.IGNORECASE)
+        direct_scenes = []
+        for pp in prompt_parts:
+            pp = pp.strip()
+            if not pp:
+                continue
+            m_q = re.findall(r'"([^"]{4,})"', pp)
+            if m_q:
+                spoken_line = fix_pronunciation(m_q[-1].strip(), lang_label)
+                direct_scenes.append({
+                    "visual": "Cinematic continuous shot",
+                    "raw_visual_hint": "",
+                    "spoken": spoken_line,
+                    "speaker": "NARRATOR",
+                    "needs_ai_visual": False
+                })
+        if direct_scenes:
+            return direct_scenes
+
     pre = re.sub(r'(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', raw_script.strip(), flags=re.IGNORECASE)
     pre = re.sub(
         r'((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)',
@@ -935,12 +957,12 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     return scenes
 # ===================================================================================
 
-# ================= MOTOR LOCAL FFMPEG.WASM v2.9 (FIX EXIT(0) + LOTE RAPIDO 1 ARQUIVO UNICO) =================
+# ================= MOTOR LOCAL FFMPEG.WASM v3.0 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
 FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Estúdio Pro — Montador Local FFmpeg.wasm v2.9</title>
+<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.0</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';document.head.appendChild(s);"></script>
 <style>
@@ -970,7 +992,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
   .dl-btn { display: block; text-align: center; padding: 12px; border-radius: 8px; font-weight: 700; text-decoration: none; font-size: 14px; }
   .dl-mp4 { background: #10b981; color: #052e16; }
   .dl-srt { background: #0f172a; color: #f8fafc; border: 1px solid #34d399; }
-  .log-box { max-height: 195px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #94a3b8; margin-top: 10px; display: none; }
+  .log-box { max-height: 210px; overflow-y: auto; background: #020617; border: 1px solid #1e293b; border-radius: 8px; padding: 10px; font-family: monospace; font-size: 11.5px; color: #94a3b8; margin-top: 10px; display: none; }
 </style>
 </head>
 <body>
@@ -978,20 +1000,20 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="top-row">
     <div>
-      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v2.9 (Blindado Contra exit(0) — 1 Vídeo Único!)</strong>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.0 (Filtro Anti-Takes Repetidos + 1 Vídeo Único)</strong>
       <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-        Une pacotes de <b>950 MB+ (120+ cenas)</b> num único <code>.MP4</code> contínuo sem recodificar!
-        Roteiro detectado: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
+        Elimina takes duplicados do Google Flow, escolhe sempre o take mais limpo e une <b>950 MB+</b> num único <code>.MP4</code>!
+        Cenas no roteiro: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <span class="badge">v2.9 Estável</span>
+      <span class="badge">v3.0 Anti-Duplicatas</span>
       <button class="btn-sec" id="open-tab-btn" title="Abre em aba exclusiva com 4GB de RAM dedicados do Chrome">🖥️ Abrir em Aba Dedicada (+RAM)</button>
     </div>
   </div>
 
-  <label class="lbl">📜 Roteiro Completo do Vídeo (Já sincronizado com a Aba 1 — ou cole/edite direto aqui):</label>
-  <textarea id="inp-script" class="script-box" rows="4" placeholder="Cole aqui o roteiro completo para alinhar todas as cenas pela fala e gerar a legenda .SRT..."></textarea>
+  <label class="lbl">📜 Roteiro Completo OU conteúdo de <code>Prompts_Flow.txt</code> (Dica: colar o <code>Prompts_Flow.txt</code> garante 100% as mesmas cenas!):</label>
+  <textarea id="inp-script" class="script-box" rows="4" placeholder="Cole aqui o roteiro completo (ou cole direto o texto de Prompts_Flow.txt com === CENA 001 ===)..."></textarea>
 
   <div class="grid2">
     <div>
@@ -1023,14 +1045,14 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div>
       <label class="lbl">🧭 3. Como ordenar e filtrar os clipes no navegador?</label>
       <select id="sel-sort">
-        <option value="whisper">🗣️ Pareamento IA por Voz (Groq Whisper em Lotes + Exclusivo 1-para-1)</option>
+        <option value="whisper">🗣️ Pareamento IA por Voz v3.0 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
         <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome + Filtro Anti-Mudos Instantâneo</option>
         <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes (Para vídeos intencionalmente mudos)</option>
       </select>
 
       <label class="chk-row" style="margin-top:10px;">
         <input type="checkbox" id="chk-drop-muted" checked />
-        <span>🧹 Descartar automaticamente clipes mudos ou takes extras repetidos</span>
+        <span>🧹 Descartar automaticamente clipes mudos e <b>takes duplicados da mesma fala</b></span>
       </label>
 
       <label class="chk-row">
@@ -1039,13 +1061,13 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
       </label>
 
       <div style="font-size:11.5px;color:#94a3b8;background:#0f172a;padding:8px 10px;border-radius:8px;border:1px solid #334155;margin-top:8px;">
-        ✅ <b>Correção exit(0) Ativa:</b> Une em blocos super-rápidos de 18 cenas com <code>-c copy</code> puro, tratando o sinal <code>exit(0)</code> nativo do Single-Thread como sucesso!
+        🛡️ <b>Trava Anti-Clone v3.0:</b> Se o <code>.ZIP</code> tiver 2 vídeos da mesma cena, o motor fica apenas com o take de pronúncia mais limpa e impede a cópia de entrar em outro round!
       </div>
     </div>
   </div>
 
   <div style="margin-top:14px;">
-    <button class="btn-main" id="btn-run">🚀 MONTAR VÍDEO COMPLETO AGORA (1 ARQUIVO ÚNICO .MP4)</button>
+    <button class="btn-main" id="btn-run">🚀 MONTAR VÍDEO LIMPO SEM REPETIÇÕES (1 ARQUIVO ÚNICO .MP4)</button>
   </div>
 
   <div class="prog-wrap" id="prog-wrap"><div class="prog-bar" id="prog-bar"></div></div>
@@ -1081,6 +1103,8 @@ function fixPronJS(t) {
          .replace(/\bJF\b/g, "Juiz de Fora")
          .replace(/\bMG\b/g, "Minas Gerais")
          .replace(/\bBR[-\s]*040\b/gi, "B R zero quarenta")
+         .replace(/R\$\s*(\d+)/g, "$1 reais")
+         .replace(/(\d+)\s*km\b/gi, "$1 quilômetros")
          .replace(/(\d+)\s*%/g, "$1 por cento")
          .replace(/\bGoliath\b/g, "Golias")
          .replace(/\bDavid\b/g, "Davi");
@@ -1129,7 +1153,7 @@ function splitSpoken8sJS(spokenText, maxWords = 18) {
   for (const ch of rawChunks) {
     const cwLen = ch.split(/\s+/).length;
     const prevLen = merged.length ? merged[merged.length - 1].split(/\s+/).length : 99;
-    if (merged.length && (cwLen < 7 || prevLen < 8) && (prevLen + cwLen <= 21)) {
+    if (merged.length && (cwLen < 8 || prevLen < 9) && (prevLen + cwLen <= 22)) {
       merged[merged.length - 1] = `${merged[merged.length - 1]} ${ch}`.trim();
     } else {
       merged.push(ch);
@@ -1140,6 +1164,19 @@ function splitSpoken8sJS(spokenText, maxWords = 18) {
 
 function parseScriptScenesJS(raw) {
   if (!raw || !raw.trim()) return [];
+  // Se colou o Prompts_Flow.txt (=== CENA 001 === ...: "fala"), extrai 1-para-1 sem refatiar!
+  if (/===\s*CENA\s*\d+\s*===/i.test(raw)) {
+    const parts = raw.split(/===\s*CENA\s*\d+\s*===/i).map(s => s.trim()).filter(Boolean);
+    const direct = [];
+    for (const p of parts) {
+      const matches = [...p.matchAll(/"([^"]{4,})"/g)];
+      if (matches.length > 0) {
+        direct.push({ spoken: fixPronJS(matches[matches.length - 1][1]) });
+      }
+    }
+    if (direct.length > 0) return direct;
+  }
+
   let pre = raw.trim().replace(/(\[(?:CENA|SCENE)\s*:)/gi, "\n\n$1");
   pre = pre.replace(/((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)/gi, "\n$1");
   const blocks = pre.trim().split(/\n\s*\n/);
@@ -1314,13 +1351,14 @@ function buildSrt(orderedItems, scenes) {
   return blocks.join("\n");
 }
 
+// ======= MOTOR v3.0: PAREMENTO 1-PARA-1 + BLOQUEIO ABSOLUTO DE TAKES CLONADOS =======
 function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   const numScenes = scenes.length;
   if (!numScenes) {
     const kept = clips.filter(c => !dropUnmatched || !c.isMuted);
     kept.sort((a, b) => a.dateMs - b.dateMs || a.name.localeCompare(b.name, undefined, { numeric: true }));
     kept.forEach((c) => { c.matchedSceneIdx = null; c.score = 100; });
-    return { kept, discardedCount: clips.length - kept.length, missingScenes: [] };
+    return { kept, discardedCount: clips.length - kept.length, duplicateTakesRemoved: 0, missingScenes: [] };
   }
 
   const sceneNorms = scenes.map(s => normalizeText(s.spoken || ""));
@@ -1331,45 +1369,94 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
     return ws;
   });
 
+  const bestScorePerClip = new Float32Array(clips.length);
+  const bestScenePerClip = new Int32Array(clips.length).fill(-1);
   const pairs = [];
+
   clips.forEach((clip, cIdx) => {
-    if (clip.isMuted) return;
-    const tNorm = normalizeText(clip.transcript || "");
-    if (!tNorm || tNorm.length < 4) return;
-    const tWords = new Set(tNorm.split(" ").filter(w => w.length >= 4));
-    const hasEndKw = endKeywords.some(kw => tNorm.includes(kw));
+    clip.tNorm = normalizeText(clip.transcript || "");
+    if (clip.isMuted || !clip.tNorm || clip.tNorm.length < 5) return;
+
+    const tWords = new Set(clip.tNorm.split(" ").filter(w => w.length >= 4));
+    const hasEndKw = endKeywords.some(kw => clip.tNorm.includes(kw));
+
+    let maxSc = 0;
+    let maxIdx = -1;
 
     sceneNorms.forEach((sNorm, sIdx) => {
       if (!sNorm) return;
-      const rFull = levenshteinRatio(tNorm, sNorm);
-      const rSort = tokenSortRatio(tNorm, sNorm);
-      let score = (rFull * 0.55) + (rSort * 0.45);
+      const rFull = levenshteinRatio(clip.tNorm, sNorm);
+      const rSort = tokenSortRatio(clip.tNorm, sNorm);
+      // Peso extra em rFull penaliza takes que têm palavras inventadas pelo Veo no final (ex: "Tamendo", "Padasa")!
+      let score = (rFull * 0.62) + (rSort * 0.38);
 
       let rareBonus = 0;
       tWords.forEach(w => {
         if (sceneWordSets[sIdx].has(w)) {
-          if (wordFreq[w] === 1) rareBonus += 8.0;
+          if (wordFreq[w] === 1) rareBonus += 8.5;
           else if (wordFreq[w] === 2) rareBonus += 3.5;
         }
       });
-      score = Math.min(100, score + Math.min(24, rareBonus));
-      if (hasEndKw && sIdx === numScenes - 1) score = Math.min(100, score + 18);
-      else if (hasEndKw && sIdx < numScenes - 2) score -= 20;
+      score = Math.min(100, score + Math.min(22, rareBonus));
 
+      if (hasEndKw && sIdx === numScenes - 1) score = Math.min(100, score + 18);
+      else if (hasEndKw && sIdx < numScenes - 2) score -= 25;
+
+      if (score > maxSc) {
+        maxSc = score;
+        maxIdx = sIdx;
+      }
       pairs.push({ score, cIdx, sIdx });
     });
+
+    bestScorePerClip[cIdx] = maxSc;
+    bestScenePerClip[cIdx] = maxIdx;
   });
 
   pairs.sort((a, b) => b.score - a.score);
   const assigned = new Map();
   const usedScenes = new Set();
+  const acceptedClipsList = [];
+  let duplicateTakesRemoved = 0;
 
   for (const p of pairs) {
-    if (p.score < 35.0) break;
-    if (!assigned.has(p.cIdx) && !usedScenes.has(p.sIdx)) {
-      assigned.set(p.cIdx, p);
-      usedScenes.add(p.sIdx);
+    // 1) Exige no mínimo 50% de similaridade real (nunca encaixa clipe por palavras soltas como "Uberlândia")
+    if (p.score < 50.0) break;
+    if (assigned.has(p.cIdx) || usedScenes.has(p.sIdx)) continue;
+
+    // 2) TRAVA ANTI-DESVIO DE TAKE REPETIDO:
+    // Se este clipe claramente pertence a outra cena (ex: bateu 90% na Cena 7, que já foi preenchida pelo Take 1),
+    // ele está PROIBIDO de cair numa cena aleatória com 52%!
+    if (p.sIdx !== bestScenePerClip[p.cIdx] && p.score < (bestScorePerClip[p.cIdx] - 7.5)) {
+      continue;
     }
+
+    // 3) DEDUPLICAÇÃO DIRETA CLONE-A-CLONE:
+    // Verifica se a fala deste clipe já é >= 70% idêntica a algum clipe já aceito no vídeo!
+    const candNorm = clips[p.cIdx].tNorm;
+    let isCloneOfAccepted = false;
+    for (const prev of acceptedClipsList) {
+      const clipSim = Math.max(
+        levenshteinRatio(candNorm, prev.tNorm),
+        tokenSortRatio(candNorm, prev.tNorm)
+      );
+      if (clipSim >= 70.0) {
+        // Só permite se no próprio roteiro as duas cenas realmente forem idênticas (>= 75%)
+        const scriptSim = levenshteinRatio(sceneNorms[p.sIdx], sceneNorms[prev.sIdx]);
+        if (scriptSim < 75.0) {
+          isCloneOfAccepted = true;
+          break;
+        }
+      }
+    }
+    if (isCloneOfAccepted) {
+      duplicateTakesRemoved++;
+      continue;
+    }
+
+    assigned.set(p.cIdx, p);
+    usedScenes.add(p.sIdx);
+    acceptedClipsList.push({ cIdx: p.cIdx, sIdx: p.sIdx, tNorm: candNorm });
   }
 
   const kept = [];
@@ -1388,6 +1475,9 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
       kept.push(clip);
     } else {
       discardedCount++;
+      if (!clip.isMuted && bestScorePerClip[cIdx] >= 55.0) {
+        duplicateTakesRemoved++;
+      }
     }
   });
 
@@ -1396,7 +1486,7 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   for (let i = 0; i < numScenes; i++) {
     if (!usedScenes.has(i)) missingScenes.push(i + 1);
   }
-  return { kept, discardedCount, missingScenes };
+  return { kept, discardedCount, duplicateTakesRemoved, missingScenes };
 }
 
 let CACHED_CORE_BLOB_URL = null;
@@ -1443,7 +1533,6 @@ async function createFreshFFmpegSingleThread() {
   return ffmpeg;
 }
 
-// Executa 1 comando FFmpeg tratando "Program terminated with exit(0)" como SUCESSO NATIVO!
 async function runFFmpegSafe(ffInstance, argsArray) {
   try {
     await ffInstance.run(...argsArray);
@@ -1461,7 +1550,6 @@ function safeCloseFFmpeg(ffInstance) {
   try { ffInstance.exit(); } catch (e) {}
 }
 
-// Une qualquer volume (ex: 118 cenas / 871 MB) em lotes rápidos de 18 cenas usando MPEG-TS + liberação imediata de memória!
 async function joinScenesIntoSingleMp4(clipsSlice, voiceFile, bgmFile, bgmVol, progStart, progSpan, labelPrefix) {
   const batchSize = 18;
   const numBatches = Math.ceil(clipsSlice.length / batchSize);
@@ -1519,7 +1607,7 @@ async function joinScenesIntoSingleMp4(clipsSlice, voiceFile, bgmFile, bgmVol, p
   let finalBytes = null;
   try {
     ffMux.FS("writeFile", "all.ts", mergedTs);
-    mergedTs = null; // libera centenas de MB da RAM JS imediatamente antes do remux!
+    mergedTs = null;
 
     const muxArgs = totalTsBytes > 300 * 1048576
       ? ["-i", "all.ts", "-c", "copy", "-bsf:a", "aac_adtstoasc", "joined.mp4"]
@@ -1684,7 +1772,8 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
     const needAudioCheck = (dropMuted && sortMode !== "alpha") || (sortMode === "whisper");
     const sampleRateTarget = 12000;
-    const slotSeconds = 10;
+    // Barreira de 2.6 segundos de silêncio absoluto entre clipes (slotSeconds = 11) para zero vazamento de palavras!
+    const slotSeconds = 11;
     const pcm12kPerClip = new Array(clipEntries.length).fill(null);
 
     if (needAudioCheck) {
@@ -1706,7 +1795,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
             if (!clipEntries[i].isMuted && sortMode === "whisper") {
               const ratio = abuf.sampleRate / sampleRateTarget;
-              const maxSamples = Math.min(Math.floor(ch0.length / ratio), Math.floor(sampleRateTarget * 8.5));
+              const maxSamples = Math.min(Math.floor(ch0.length / ratio), Math.floor(sampleRateTarget * 8.4));
               const down = new Int16Array(maxSamples);
               for (let s = 0; s < maxSamples; s++) {
                 const v = Math.max(-1, Math.min(1, ch0[Math.floor(s * ratio)]));
@@ -1728,6 +1817,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
     let orderedClips = [];
     let discardedCount = 0;
+    let duplicateTakesRemoved = 0;
     let missingScenes = [];
 
     const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && activeScenes.length > 0;
@@ -1735,14 +1825,14 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     if (canUseWhisper) {
       const speakableIndices = [];
       clipEntries.forEach((c, idx) => { if (!c.isMuted && pcm12kPerClip[idx]) speakableIndices.push(idx); });
-      logMsg(`🗣️ Transcrevendo ${speakableIndices.length} clipes com voz via Whisper Turbo...`);
+      logMsg(`🗣️ Transcrevendo ${speakableIndices.length} clipes falados com barreira anti-vazamento...`);
 
-      const batchSize = 8;
+      const batchSize = 7;
       const totalBatches = Math.ceil(speakableIndices.length / batchSize);
 
       for (let b = 0; b < totalBatches; b++) {
         const sliceIdxs = speakableIndices.slice(b * batchSize, (b + 1) * batchSize);
-        setProgress(32 + ((b + 1) / Math.max(1, totalBatches)) * 24, `🧠 Pareando falas IA com as ${activeScenes.length} cenas (Lote ${b + 1}/${totalBatches})...`);
+        setProgress(32 + ((b + 1) / Math.max(1, totalBatches)) * 24, `🧠 Pareando falas IA e filtrando takes clonados (Lote ${b + 1}/${totalBatches})...`);
 
         const totalSlotSamples = sliceIdxs.length * slotSeconds * sampleRateTarget;
         const batchPcm = new Int16Array(totalSlotSamples);
@@ -1757,8 +1847,8 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
         if (wData.words && wData.words.length > 0) {
           for (const w of wData.words) {
-            const mid = ((w.start || 0) + (w.end || w.start || 0)) / 2.0;
-            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor(mid / slotSeconds)));
+            const wStart = w.start !== undefined ? w.start : 0;
+            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor((wStart + 0.15) / slotSeconds)));
             buckets[sPos].push(w.word);
           }
         } else if (wData.segments && wData.segments.length > 0) {
@@ -1778,6 +1868,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
       const matchRes = assignClipsExclusivelyJS(clipEntries, activeScenes, CONFIG.endKeywords, dropMuted);
       orderedClips = matchRes.kept;
       discardedCount = matchRes.discardedCount;
+      duplicateTakesRemoved = matchRes.duplicateTakesRemoved;
       missingScenes = matchRes.missingScenes;
 
       if (!orderedClips.length && clipEntries.length) {
@@ -1795,18 +1886,18 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     }
 
     const totalSelectedMB = orderedClips.reduce((acc, c) => acc + (c.byteLength || c.sizeHint || 0), 0) / 1048576;
-    logMsg(`🎬 Cenas finais alinhadas: ${orderedClips.length} (${totalSelectedMB.toFixed(1)} MB) | Removidos mudos/extras: ${discardedCount}`);
+    logMsg(`🎬 Cenas únicas válidas: ${orderedClips.length} (${totalSelectedMB.toFixed(1)} MB) | Takes repetidos/mudos descartados: ${discardedCount}`);
 
     const partBlobs = [];
     let mustSplit = (!preferSingleFile && totalSelectedMB > 650) || (totalSelectedMB > 1250);
 
     if (!mustSplit) {
       try {
-        logMsg(`⚡ Gerando 1 ÚNICO ARQUIVO .MP4 contínuo com todas as ${orderedClips.length} cenas (${totalSelectedMB.toFixed(0)} MB)...`);
+        logMsg(`⚡ Gerando 1 ÚNICO ARQUIVO .MP4 contínuo com as ${orderedClips.length} cenas únicas (${totalSelectedMB.toFixed(0)} MB)...`);
         const singleBlob = await joinScenesIntoSingleMp4(orderedClips, voiceFile, bgmFile, bgmVol, 58, 40, "");
-        partBlobs.push({ name: "VIDEO_FINAL_COMPLETO.mp4", label: "💾 BAIXAR VÍDEO COMPLETO", blob: singleBlob });
+        partBlobs.push({ name: "VIDEO_FINAL_LIMPO_COMPLETO.mp4", label: "💾 BAIXAR VÍDEO COMPLETO SEM REPETIÇÕES", blob: singleBlob });
       } catch (memErr) {
-        logMsg("⚠️ Memória contínua atingiu o teto da aba em 1 arquivo só — dividindo automaticamente em 2 partes sem perda de qualidade...");
+        logMsg("⚠️ Memória contínua atingiu o teto da aba — dividindo automaticamente em 2 partes sem perda de qualidade...");
         mustSplit = true;
       }
     }
@@ -1830,18 +1921,18 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     const srtBlob = new Blob([srtText], { type: "text/plain;charset=utf-8" });
     const srtUrl = URL.createObjectURL(srtBlob);
 
-    setProgress(100, "🎉 Vídeo completo pronto para download imediato!");
+    setProgress(100, "🎉 Vídeo limpo (zero cenas repetidas) pronto para download!");
 
     const dlBox = document.getElementById("dl-box");
     dlBox.style.display = "block";
     const sumMB = partBlobs.reduce((acc, b) => acc + b.blob.size, 0) / 1048576;
 
     document.getElementById("dl-summary").innerText =
-      `✅ MONTAGEM CONCLUÍDA! ${orderedClips.length} cenas alinhadas (${sumMB.toFixed(1)} MB)` +
-      (discardedCount > 0 ? ` | 🧹 ${discardedCount} clipe(s) extra(s)/mudo(s) descartado(s)!` : "");
+      `✅ MONTAGEM v3.0 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
+      (discardedCount > 0 ? ` | 🧹 ${discardedCount} take(s) repetido(s)/mudo(s) eliminado(s)!` : "");
 
     document.getElementById("dl-missing").innerText = missingScenes.length
-      ? `💡 Cenas do roteiro que vieram mudas do Flow e foram omitidas: Cena(s) ${missingScenes.join(", ")}.`
+      ? `💡 Cenas do roteiro que não estavam no pacote (ou vieram mudas): Cena(s) ${missingScenes.join(", ")}.`
       : "";
 
     const btnContainer = document.getElementById("dl-buttons-container");
@@ -1871,7 +1962,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     }
 
     orderedClips.forEach((c, idx) => {
-      logMsg(`Posição ${String(idx + 1).padStart(3, "0")} -> Cena ${c.matchedSceneIdx !== null ? c.matchedSceneIdx + 1 : "Extra"} (${c.score}%) | ${c.name} | "${(c.transcript || "").slice(0, 55)}"`);
+      logMsg(`Posição ${String(idx + 1).padStart(3, "0")} -> Cena ${c.matchedSceneIdx !== null ? c.matchedSceneIdx + 1 : "Extra"} (${c.score}%) | ${c.name} | "${(c.transcript || "").slice(0, 60)}"`);
     });
 
   } catch (err) {
@@ -2006,15 +2097,18 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
             word_freq[w] += 1
 
     end_kws = LANGUAGES[lang_label]["end_keywords"]
+    best_per_clip = {}
     candidate_pairs = []
 
     for c_idx, clip in enumerate(clips_info):
         t_norm = normalize_text(clip.get("transcript", ""))
-        if not t_norm or len(t_norm) < 4:
+        clip["t_norm"] = t_norm
+        if not t_norm or len(t_norm) < 5:
             continue
 
         t_words = {w for w in t_norm.split() if len(w) >= 4}
         has_end_kw = any(kw in t_norm for kw in end_kws)
+        max_sc, max_s = 0.0, -1
 
         for s_idx, s_norm in enumerate(scene_norms):
             if not s_norm:
@@ -2022,14 +2116,13 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
 
             r_full = fuzz.ratio(t_norm, s_norm)
             r_sort = fuzz.token_sort_ratio(t_norm, s_norm)
-            r_set = fuzz.token_set_ratio(t_norm, s_norm)
-            base_score = (r_full * 0.45) + (r_sort * 0.35) + (r_set * 0.20)
+            base_score = (r_full * 0.62) + (r_sort * 0.38)
 
             s_words = scene_word_sets[s_idx]
             shared_rare_bonus = 0.0
             for sw in (t_words & s_words):
                 if word_freq[sw] == 1:
-                    shared_rare_bonus += 7.5
+                    shared_rare_bonus += 8.5
                 elif word_freq[sw] == 2:
                     shared_rare_bonus += 3.5
             score = min(100.0, base_score + min(22.0, shared_rare_bonus))
@@ -2037,21 +2130,43 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
             if has_end_kw and s_idx == num_scenes - 1:
                 score = min(100.0, score + 18.0)
             elif has_end_kw and s_idx < num_scenes - 2:
-                score -= 20.0
+                score -= 25.0
 
+            if score > max_sc:
+                max_sc, max_s = score, s_idx
             candidate_pairs.append((score, c_idx, s_idx))
+
+        best_per_clip[c_idx] = (max_s, max_sc)
 
     candidate_pairs.sort(key=lambda x: x[0], reverse=True)
 
     assigned_clips = {}
     used_scenes = set()
+    accepted_norms = []
 
     for score, c_idx, s_idx in candidate_pairs:
-        if score < 38.0:
+        if score < 50.0:
             break
-        if c_idx not in assigned_clips and s_idx not in used_scenes:
-            assigned_clips[c_idx] = (float(s_idx), s_idx, score)
-            used_scenes.add(s_idx)
+        if c_idx in assigned_clips or s_idx in used_scenes:
+            continue
+
+        b_s, b_sc = best_per_clip.get(c_idx, (-1, 0.0))
+        if s_idx != b_s and score < (b_sc - 7.5):
+            continue
+
+        cand_norm = clips_info[c_idx]["t_norm"]
+        is_clone = False
+        for prev_s_idx, prev_norm in accepted_norms:
+            if max(fuzz.ratio(cand_norm, prev_norm), fuzz.token_sort_ratio(cand_norm, prev_norm)) >= 70.0:
+                if fuzz.ratio(scene_norms[s_idx], scene_norms[prev_s_idx]) < 75.0:
+                    is_clone = True
+                    break
+        if is_clone:
+            continue
+
+        assigned_clips[c_idx] = (float(s_idx), s_idx, score)
+        used_scenes.add(s_idx)
+        accepted_norms.append((s_idx, cand_norm))
 
     kept_clips = []
     discarded_clips = []
@@ -2081,7 +2196,7 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
 is_admin = (st.session_state.get("user_role") == "admin")
 col_hdr1, col_hdr2 = st.columns([5, 1])
 with col_hdr1:
-    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v2.9 & SEO")
+    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.0 & SEO")
 with col_hdr2:
     st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
     if st.button("🔒 Sair", use_container_width=True):
@@ -2095,14 +2210,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (950MB+ / 12+ min) sem travar"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (950MB+) sem cenas repetidas"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
         "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
         "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** O sistema fatia em cenas de 8s, trava aparência fixa de personagens e gera prompts em linha única.\n"
         "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** e envie pela **Extensão VIP v2.0**.\n"
-        "4. **Montagem Local FFmpeg.wasm v2.9 (Aba 2):** Cole o roteiro no painel azul da Aba 2, escolha seu `.ZIP` de 950 MB+ e una tudo em 1 arquivo `.MP4` único!"
+        "4. **Montagem v3.0 Anti-Duplicatas (Aba 2):** Cole o roteiro (ou o próprio `Prompts_Flow.txt`) na Aba 2 e escolha seu `.ZIP` — o filtro descarta takes clonados e escolhe sempre o take com pronúncia mais limpa!"
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -2140,7 +2255,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "⚡ 2. Montagem Local FFmpeg.wasm v2.9 (950MB+ em 1 Vídeo Único)",
+    "⚡ 2. Montagem Local FFmpeg.wasm v3.0 (Zero Takes Repetidos)",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -2388,8 +2503,8 @@ with tab1:
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
                         f"Scene action: {sc['visual']}. Characters on screen DO NOT speak and keep mouths closed (off-screen studio narration). "
-                        f"VOICE & LANGUAGE LOCK (MANDATORY AUDIBLE VOICEOVER IN {lang_en_name}, NEVER MUTE, ZERO ENGLISH, zero music): "
-                        f"{voice_short} speaks clearly in native {lang_en_name}: \"{clean_spoken}\""
+                        f"VOICE & LANGUAGE LOCK (MANDATORY AUDIBLE VOICEOVER IN {lang_en_name}, NEVER MUTE, ZERO EXTRA WORDS, ZERO ENGLISH, zero music): "
+                        f"{voice_short} speaks ONLY this exact line in native {lang_en_name}: \"{clean_spoken}\""
                     )
 
                 p_box = re.sub(r'[\r\n]+', ' ', raw_p)
@@ -2410,7 +2525,7 @@ with tab2:
     engine_choice = st.radio(
         "⚙️ Escolha onde processar os vídeos:",
         [
-            "⚡ Modo Local no Navegador — FFmpeg.wasm v2.9 (Para .ZIP Gigantes de 300MB a 2GB+ — 1 Arquivo .MP4 Único!)",
+            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.0 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
             "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB)"
         ],
         index=0
@@ -2420,7 +2535,7 @@ with tab2:
         render_ffmpeg_wasm_assembler(st.session_state.get("saved_script", ""), selected_lang, active_api_key, is_vertical)
     else:
         roteiro_input = st.text_area(
-            "📜 Roteiro Completo do Vídeo (Usado para alinhar as cenas e gerar a legenda .SRT):",
+            "📜 Roteiro Completo ou Prompts_Flow.txt (Usado para alinhar as cenas e gerar a legenda .SRT):",
             value=st.session_state.get("saved_script", ""),
             height=180
         )
@@ -2440,13 +2555,13 @@ with tab2:
 
         col1, col2 = st.columns([1, 1])
         with col1:
-            drop_muted_dups = st.checkbox("🧹 Ignorar automaticamente clipes mudos ou takes extras duplicados", value=True)
+            drop_muted_dups = st.checkbox("🧹 Ignorar automaticamente clipes mudos e takes extras duplicados", value=True)
             compress_long_video = st.checkbox("⚡ Otimizar tamanho final para vídeos longos", value=True)
             burn_subs = st.checkbox("💬 Gravar legendas embutidas direto na imagem do vídeo", value=False)
             sort_method = st.radio(
                 "Como ordenar os clipes antes de juntar?",
                 [
-                    "🗣️ Pareamento Exclusivo 1-para-1 pela frase + palavras-chave raras",
+                    "🗣️ Pareamento Exclusivo v3.0 Anti-Duplicatas",
                     "🔢 Ordenar apenas pelo nome dos arquivos"
                 ]
             )
@@ -2721,4 +2836,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v2.9 COMPLETO (BLINDADO CONTRA EXIT(0) + 1 ARQUIVO UNICO)
+# FIM DO ARQUIVO SAAS ULTIMATE v3.0 COMPLETO (ANTI-CLONE DE TAKES DUPLICADOS + 1 VIDEO UNICO)
