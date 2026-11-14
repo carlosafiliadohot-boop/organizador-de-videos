@@ -106,6 +106,8 @@ DEFAULT_CHAR_B = (
     "22-year-old Brazilian young woman, warm olive skin, shoulder-length dark brown curly hair, "
     "mustard-yellow ribbed t-shirt under a classic medium-blue denim jacket"
 )
+DEFAULT_VOICE_A = "adult male baritone voice (110 Hz), natural expressive delivery"
+DEFAULT_VOICE_B = "young adult female voice (205 Hz), clear natural delivery"
 
 for k_def, v_def in {
     "saved_script": "",
@@ -115,9 +117,10 @@ for k_def, v_def in {
     "dna_char_a": DEFAULT_CHAR_A,
     "dna_char_b": DEFAULT_CHAR_B,
     "dna_single_char": "",
-    "voice_char_a": "52-year-old Brazilian male baritone voice (105 Hz), calm Minas Gerais accent",
-    "voice_char_b": "22-year-old Brazilian young female voice (210 Hz), natural expressive accent",
-    "uploader_reset_id": 0
+    "voice_char_a": DEFAULT_VOICE_A,
+    "voice_char_b": DEFAULT_VOICE_B,
+    "uploader_reset_id": 0,
+    "custom_audio_1to1_lock": False
 }.items():
     if k_def not in st.session_state:
         st.session_state[k_def] = v_def
@@ -159,12 +162,13 @@ LANGUAGES = {
     }
 }
 
+# Presets blindados sem marcas registradas que disparam falso filtro de "pessoas famosas" no Google Veo
 STYLE_PRESETS = {
     "Cinematográfico Realista 4K": (
-        "Photorealistic 4K cinema footage, natural lighting, period-accurate wardrobe and setting, single continuous camera shot, zero text or signs on screen."
+        "Photorealistic 4K cinema footage, natural cinematic lighting, strictly period-accurate wardrobe and setting, single continuous camera shot, zero text or signs on screen."
     ),
     "Cartoon 3D Pixar": (
-        "3D Pixar-style animated feature film look, vibrant colors, soft global illumination, characters wearing strictly period-accurate clothing faithful to the story era (zero modern caps or anachronistic clothes), single continuous shot, zero text on screen."
+        "High-end 3D stylized animated feature film look, vibrant colors, soft global illumination, fictional animated characters wearing strictly period-accurate clothing faithful to the story era (zero modern caps or anachronistic clothes), single continuous shot, zero text on screen."
     ),
     "Boneco Palito 2D": (
         "2D flat minimalist vector animation, consistent simple white stick figure characters dressed for the story context, clean background, single continuous shot, zero text on screen."
@@ -312,11 +316,31 @@ def build_chrome_extension_zip():
         zf.writestr("Extensao_Estudio_Pro_Flow_v2/COMO_INSTALAR.txt", readme_str)
     return mem_zip.getvalue()
 
+def sanitize_visual_for_veo_safety(vis_en):
+    """Evita falsos positivos de 'pessoas famosas' ou marcas registradas no Google Veo."""
+    if not vis_en:
+        return ""
+    s = vis_en
+    s = re.sub(r'\bPixar[-\s]*style\b', '3D stylized animated', s, flags=re.IGNORECASE)
+    s = re.sub(r'\bDisney\b', 'animated', s, flags=re.IGNORECASE)
+    s = re.sub(r'\b(?:dead|corpse|bloody|bleeding|kills|killing)\b', 'defeated', s, flags=re.IGNORECASE)
+    s = re.sub(r'\blies motionless\b', 'kneels defeated on the ground', s, flags=re.IGNORECASE)
+    return re.sub(r'\s+', ' ', s).strip()
+
 def fix_pronunciation(text, lang_label):
     if not text:
         return ""
     t = text.strip()
     if "Português" in lang_label:
+        # Converte palavras longas em CAPS LOCK (ex: JUIZ DE FORA -> Juiz de Fora) para o Veo não soletrar como sigla!
+        known_acronyms = {"IBGE", "UFJF", "UFU", "UFMG", "UFV", "UFSJ", "IDH", "PIB", "ONU", "EUA", "SUS", "CPF", "CNPJ"}
+        def _decap(m):
+            w = m.group(0)
+            if w in known_acronyms:
+                return w
+            return w.capitalize()
+        t = re.sub(r'\b[A-ZÁÀÂÃÉÊÍÓÔÕÚÇ]{4,}\b', _decap, t)
+
         pt_names = {
             r'\bGoliath\b': 'Golias',
             r'\bDavid\b': 'Davi',
@@ -384,13 +408,13 @@ def get_compact_voice_profile(gender_choice, custom_voice_desc=""):
     extra = f", {custom_voice_desc.strip()}" if custom_voice_desc.strip() else ""
     if "Masculina" in gender_choice:
         return (
-            f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult 35-year-old male studio narrator "
-            f"(deep chest-resonant baritone 115 Hz, Neumann mic{extra}; ZERO silence, ZERO extra improvised words, "
+            f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult male studio narrator "
+            f"(deep chest-resonant baritone 115 Hz, warm studio mic{extra}; ZERO silence, ZERO extra improvised words, "
             f"NEVER use female or child voices)"
         )
     return (
-        f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult 32-year-old female studio narrator "
-        f"(smooth mezzo-soprano 195 Hz, Neumann mic{extra}; ZERO silence, ZERO extra improvised words, "
+        f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult female studio narrator "
+        f"(smooth mezzo-soprano 195 Hz, warm studio mic{extra}; ZERO silence, ZERO extra improvised words, "
         f"NEVER use male or child voices)"
     )
 
@@ -589,14 +613,66 @@ def get_audio_duration_sec(audio_path, ffmpeg_exe):
 def get_media_duration_sec(media_path, ffmpeg_exe):
     return get_audio_duration_sec(media_path, ffmpeg_exe)
 
-def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
-    import speech_recognition as sr
+def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api_key, ffmpeg_exe):
+    """
+    Fatia matematicamente o áudio enviado de 8.0 em 8.0 segundos (sincronia 1-para-1 cravada!).
+    Usa Groq Whisper Turbo (ultra-rápido e pontuado) se houver chave gsk_, com fallback automático para Google SR.
+    """
     dur = get_audio_duration_sec(audio_path, ffmpeg_exe)
     num_chunks = max(1, math.ceil(dur / 8.0))
-    recognizer = sr.Recognizer()
+    clean_key = api_key.strip() if api_key else ""
     work_dir = tempfile.mkdtemp()
     blocks = []
+
     try:
+        # Caminho 1: Transcrição em alta precisão com timestamps exatos via Groq Whisper Turbo
+        if clean_key.startswith("gsk_"):
+            wav_full = os.path.join(work_dir, "full_16k.wav")
+            subprocess.run(
+                [ffmpeg_exe, '-y', '-i', audio_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '12000', '-ac', '1', wav_full],
+                stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
+            )
+            if os.path.exists(wav_full) and os.path.getsize(wav_full) < 24 * 1024 * 1024:
+                with open(wav_full, "rb") as wf:
+                    r_w = requests.post(
+                        "https://api.groq.com/openai/v1/audio/transcriptions",
+                        headers={"Authorization": f"Bearer {clean_key}"},
+                        files={"file": ("audio.wav", wf, "audio/wav")},
+                        data={
+                            "model": "whisper-large-v3-turbo",
+                            "language": whisper_lang,
+                            "response_format": "verbose_json",
+                            "timestamp_granularities[]": "word"
+                        },
+                        timeout=90
+                    )
+                if r_w.status_code == 200:
+                    w_json = r_w.json()
+                    buckets = [[] for _ in range(num_chunks)]
+                    if w_json.get("words"):
+                        for w_obj in w_json["words"]:
+                            mid_t = ((w_obj.get("start", 0.0) or 0.0) + (w_obj.get("end", 0.0) or 0.0)) / 2.0
+                            idx_b = min(num_chunks - 1, max(0, int(mid_t // 8.0)))
+                            buckets[idx_b].append(w_obj.get("word", ""))
+                    elif w_json.get("segments"):
+                        for seg in w_json["segments"]:
+                            mid_t = ((seg.get("start", 0.0) or 0.0) + (seg.get("end", 0.0) or 0.0)) / 2.0
+                            idx_b = min(num_chunks - 1, max(0, int(mid_t // 8.0)))
+                            buckets[idx_b].append(seg.get("text", ""))
+                    if any(buckets):
+                        for i in range(num_chunks):
+                            start_s = i * 8
+                            spoken_piece = " ".join(buckets[i]).strip()
+                            if not spoken_piece:
+                                spoken_piece = f"Continuação instrumental e visual da cena {i + 1}"
+                            t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
+                            t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
+                            blocks.append(f"[{t1} - {t2}]\nLOCUÇÃO: {re.sub(r'\\s+', ' ', spoken_piece)}")
+                        return "\n\n".join(blocks), dur, num_chunks
+
+        # Caminho 2 (Fallback): Google SpeechRecognition fatia por fatia de 8s
+        import speech_recognition as sr
+        recognizer = sr.Recognizer()
         for i in range(num_chunks):
             start_s = i * 8
             wav_chunk = os.path.join(work_dir, f"chunk_{i}.wav")
@@ -608,7 +684,7 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, ffmpeg_exe):
                     adata = recognizer.record(src)
                 spoken_piece = recognizer.recognize_google(adata, language=sr_lang_code)
             except Exception:
-                spoken_piece = f"Trecho narrado da cena {i+1}"
+                spoken_piece = f"Continuação visual da cena {i + 1}"
             t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
             t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
             blocks.append(f"[{t1} - {t2}]\nLOCUÇÃO: {spoken_piece}")
@@ -622,34 +698,60 @@ def generate_auto_cast_dna(topic, raw_script_sample, style_choice, api_key):
         return ""
     p_cast = (
         f"Analyze the topic '{topic}' and script excerpt below:\n{raw_script_sample[:1800]}\n\n"
-        f"Does this video feature specific recurring human/animated characters (like David & Goliath, historical figures, or a protagonist)?\n"
+        f"Does this video feature specific recurring characters (like biblical figures, historical characters, or a protagonist)?\n"
         f"- If NO (pure city/nature/geography documentary without recurring characters): output ONLY the word NONE.\n"
-        f"- If YES: write ONE concise English Lock Sheet (max 45 words total) defining the EXACT unchanging hairstyle, hair color, skin tone, age, biological sex, and period-accurate outfit color for the 1 or 2 main recurring characters so they look 100% identical in every scene (NEVER change hair color or outfit).\n"
+        f"- If YES: write ONE concise English Lock Sheet (max 45 words total) defining the fictionalized animated/cinematic appearance: EXACT unchanging hairstyle, hair color, skin tone, age, biological sex, and period-accurate outfit color for the 1 or 2 main recurring characters so they look 100% identical in every scene (NEVER use modern clothes in ancient stories, NEVER mention celebrity names).\n"
         f"Output ONLY 'NONE' or the single-line English character lock description."
     )
     out, err = call_llm_text("Output ONLY 'NONE' or a concise single-line English character visual lock.", p_cast, clean_key, temperature=0.1)
     if err or not out or out.strip().upper().startswith("NONE"):
         return ""
-    return re.sub(r'[\r\n"]+', ' ', out).strip()
+    return sanitize_visual_for_veo_safety(re.sub(r'[\r\n"]+', ' ', out).strip())
+
+def auto_adapt_dialogue_cast(topic, style_choice, api_key):
+    """Adapta automaticamente Personagem A e B (aparência + voz) ao tema quando o usuário está no Modo 2."""
+    clean_key = api_key.strip() if api_key else ""
+    if not clean_key or not topic.strip():
+        return None
+    p = (
+        f"Video Topic / Story: '{topic}' | Visual Style: '{style_choice}'.\n"
+        f"Define the 2 main speaking characters for this exact theme and era (use strictly period-accurate ancient/historical clothing if biblical/historical, NEVER modern suits or living rooms unless the theme is modern!).\n"
+        f"Return STRICTLY 4 lines in this exact format in English:\n"
+        f"DNA_A: <fictional character A gender, age, skin tone, exact hair, and period-accurate outfit in 25-35 words>\n"
+        f"VOICE_A: <character A voice gender, age, pitch in Hz, and tone in 10-15 words>\n"
+        f"DNA_B: <fictional character B gender, age, skin tone, exact hair, and period-accurate outfit in 25-35 words>\n"
+        f"VOICE_B: <character B voice gender, age, pitch in Hz, and tone in 10-15 words>"
+    )
+    out, err = call_llm_text("Output ONLY the 4 requested lines (DNA_A, VOICE_A, DNA_B, VOICE_B).", p, clean_key, temperature=0.2)
+    if err or not out:
+        return None
+    res = {}
+    for ln in out.splitlines():
+        for k in ("DNA_A", "VOICE_A", "DNA_B", "VOICE_B"):
+            if ln.strip().upper().startswith(k + ":"):
+                res[k] = sanitize_visual_for_veo_safety(ln.split(":", 1)[1].strip())
+    return res if ("DNA_A" in res and "DNA_B" in res) else None
 
 def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, aspect_framing, char_a_desc="", char_b_desc="", single_char_desc="", api_key=""):
     lang_en = LANGUAGES[lang_label]["name_en"]
     if "Diálogo" in audio_mode:
+        ca_info = char_a_desc.strip() if char_a_desc.strip() else f"Main Character A from '{title}' in period-accurate attire"
+        cb_info = char_b_desc.strip() if char_b_desc.strip() else f"Main Character B from '{title}' in period-accurate attire"
         prompt_text = (
             f"You are a master screenwriter creating an authentic, high-retention dialogue video.\n"
             f"Story / Situation: '{title}'\n"
             f"Video Framing: {aspect_framing}\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n"
-            f"Character A: {char_a_desc}\n"
-            f"Character B: {char_b_desc}\n\n"
+            f"Character A: {ca_info}\n"
+            f"Character B: {cb_info}\n\n"
             f"RULES:\n"
-            f"1. STRICT CHRONOLOGICAL PROGRESSION (ZERO REPETITION): Never repeat questions or opening lines. Every scene MUST advance the story forward.\n"
-            f"2. NATIVE SPEECH & GENDER ACCURACY: Write authentic {lang_en} (12 to 17 words per scene) with 100% accurate grammatical gender.\n"
-            f"3. ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B.\n"
-            f"4. FIXED SETTING: Keep BOTH characters in the exact same room and lighting across all {num_scenes} scenes.\n\n"
+            f"1. STRICT CHRONOLOGICAL PROGRESSION (ZERO REPETITION): Never repeat questions or opening lines. Every scene MUST advance the story forward from setup to resolution.\n"
+            f"2. ERA-APPROPRIATE SETTING (NEVER ANACHRONISTIC ROOMS): Set every [CENA: ...] in the authentic location of '{title}' (e.g., ancient sunlit valley/camp for biblical stories, NEVER an indoor modern room or men in suits unless the topic is modern!).\n"
+            f"3. NATIVE SPEECH & ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B speaking authentic {lang_en} (12 to 17 words per scene, native translated names like 'Davi' and 'Golias').\n"
+            f"4. NO BLANK LINES INSIDE A SCENE BLOCK: Keep [00:00 - 00:08], [CENA: ...], and PERSONAGEM A/B together in the same block!\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Medium two-shot in the same room in English, active speaker talking while listener is silent, zero text]\n"
+            f"[CENA: Continuous two-shot in the authentic setting of the story in English, active speaker talking while listener is silent, zero text]\n"
             f"PERSONAGEM A: Authentic line in {lang_en} (12-17 words, zero abbreviations)."
         )
     else:
@@ -659,8 +761,8 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             char_hint = "white stick figure characters dressed appropriately for the story's era and context"
         elif "Cartoon" in style_choice:
             char_hint = (
-                "3D Pixar-style characters with IDENTICAL hairstyle/color in every scene and STRICTLY PERIOD-ACCURATE clothing "
-                "(e.g., ancient woven tunics/sandals for biblical stories, NEVER modern caps or t-shirts)"
+                "3D stylized animated characters with IDENTICAL hairstyle/color in every scene and STRICTLY PERIOD-ACCURATE clothing "
+                "(e.g., ancient woven tunics/sandals for biblical stories, NEVER modern caps, suits, or t-shirts)"
             )
         else:
             char_hint = "period-accurate cinematic documentary footage of the real location, historical era, or consistent characters"
@@ -670,11 +772,11 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"Topic / Story Title: '{title}'\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
             f"CRITICAL STORYTELLING, CHARACTER HAIR/OUTFIT LOCK & NATIVE NAMES RULES:\n"
-            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background; middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action. NEVER place battlefield action before peaceful introduction, and NEVER place confrontation after victory!\n"
-            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character and repeat those EXACT traits in every [CENA: ...] where they appear. Visuals feature {char_hint}.\n"
-            f"3. 100% NATIVE NAMES IN {lang_en}: In LOCUÇÃO, ALWAYS write proper names translated into {lang_en} (e.g., write 'Davi' and 'Golias' in Portuguese, NEVER 'David' or 'Goliath').\n"
-            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (14 to 18 words) a complete, natural phrase so audio alignment is 100% unmistakable and Veo never improvises filler words. All characters on screen keep mouths closed.\n\n"
-            f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
+            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background; middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action.\n"
+            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character and repeat those EXACT traits in every [CENA: ...] where they appear. Visuals feature {char_hint}. Avoid graphic gore words (use 'defeated on the ground' instead of 'dead/corpse').\n"
+            f"3. 100% NATIVE NAMES IN {lang_en}: In LOCUÇÃO, ALWAYS write proper names translated into {lang_en} (e.g., write 'Davi' and 'Golias' in Portuguese, NEVER 'David' or 'Goliath', and NEVER write normal words in ALL CAPS).\n"
+            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (14 to 18 words) a complete, natural phrase. All characters on screen keep mouths closed.\n\n"
+            f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, ZERO blank lines between [CENA:] and LOCUÇÃO:):\n"
             f"[00:00 - 00:08]\n"
             f"[CENA: Single continuous shot in English repeating exact character hair/gender/period outfit and action, mouths closed, zero text]\n"
             f"LOCUÇÃO: Engaging narration in {lang_en} using native translated names (14-18 words)."
@@ -772,7 +874,7 @@ def clean_visual_for_flow(vis_text):
         vis_text,
         flags=re.IGNORECASE
     ).strip(" /+-:,")
-    return v if len(v) >= 6 else ""
+    return sanitize_visual_for_veo_safety(v) if len(v) >= 6 else ""
 
 def looks_non_english_visual(text):
     if not text:
@@ -782,11 +884,10 @@ def looks_non_english_visual(text):
     pt_markers = r'\b(vista|aérea|imagem|imagens|tela|dividida|prédios|cidade|ruas|morros|carretas|comércio|feiras|padarias|pôr do sol|câmera|mostrando|pessoas|famílias|centro|bairro|menino|gigante|pedra|vale)\b'
     return bool(re.search(pt_markers, text, flags=re.IGNORECASE))
 
-def extract_scenes_for_prompts(raw_script, lang_label):
+def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=False, allow_empty_speech=False):
     if not raw_script or not raw_script.strip():
         return []
 
-    # Suporte 1:1 se o usuário colar o próprio arquivo Prompts_Flow.txt (=== CENA 001 === ...: "fala")
     if re.search(r'===\s*CENA\s*\d+\s*===', raw_script, re.IGNORECASE):
         prompt_parts = re.split(r'===\s*CENA\s*\d+\s*===', raw_script, flags=re.IGNORECASE)
         direct_scenes = []
@@ -794,7 +895,7 @@ def extract_scenes_for_prompts(raw_script, lang_label):
             pp = pp.strip()
             if not pp:
                 continue
-            m_q = re.findall(r'"([^"]{4,})"', pp)
+            m_q = re.findall(r'"([^"]{3,})"', pp)
             if m_q:
                 spoken_line = fix_pronunciation(m_q[-1].strip(), lang_label)
                 direct_scenes.append({
@@ -807,10 +908,15 @@ def extract_scenes_for_prompts(raw_script, lang_label):
         if direct_scenes:
             return direct_scenes
 
-    pre = re.sub(r'(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', raw_script.strip(), flags=re.IGNORECASE)
+    pre = raw_script.strip()
+    # Garante separação ANTES de cada novo timestamp ou [CENA:], mas COLA [CENA:] na fala seguinte (evita cena muda ""!)
+    pre = re.sub(r'(?<!^)\n*(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])', r'\n\n\1', pre)
+    pre = re.sub(r'(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])\s*\n+\s*', r'\1\n', pre)
+    pre = re.sub(r'(?<!\]\n)\n*(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', pre, flags=re.IGNORECASE)
+    pre = re.sub(r'(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])\s*\n+\s*(\[(?:CENA|SCENE)\s*:)', r'\1\n\2', pre, flags=re.IGNORECASE)
     pre = re.sub(
-        r'((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)',
-        r'\n\1',
+        r'(\[(?:CENA|SCENE)\s*:[^\]]*\])\s*\n+\s*(?=(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM))',
+        r'\1\n',
         pre,
         flags=re.IGNORECASE
     )
@@ -825,12 +931,14 @@ def extract_scenes_for_prompts(raw_script, lang_label):
     ]
 
     scenes = []
+    pending_orphan_visual = ""
+
     for block in blocks:
         lines = [l.strip() for l in block.splitlines() if l.strip()]
         visual, spoken_parts, speaker_tag = "", [], "NARRATOR"
 
         for line in lines:
-            if re.match(r'^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?', line):
+            if re.match(r'^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?$', line):
                 continue
             if re.match(r'^(?:ROUND\s*\d+|ABERTURA|VEREDITO\s+FINAL|ENCERRAMENTO|INTRODU[ÇC][ÃA]O|CAP[ÍI]TULO\s*\d+|PARTE\s*\d+)\b', line, re.IGNORECASE) and ":" not in line:
                 continue
@@ -854,14 +962,31 @@ def extract_scenes_for_prompts(raw_script, lang_label):
             else:
                 spoken_parts.append(fix_pronunciation(line, lang_label))
 
+        if not visual and pending_orphan_visual:
+            visual = pending_orphan_visual
+            pending_orphan_visual = ""
+
         full_spoken = " ".join(p for p in spoken_parts if p).strip()
+
+        # Se um bloco tinha só [CENA:] sem fala, guarda o visual para colar no próximo bloco em vez de gerar fala vazia ""!
+        if not full_spoken and visual and not allow_empty_speech:
+            pending_orphan_visual = visual
+            continue
+
         if not full_spoken and not visual:
             continue
 
-        chunks = split_spoken_into_8s_chunks(full_spoken, max_words=18) if full_spoken else [""]
+        # No Modo 3 (Áudio Próprio gravado), preserva exatamente 1 bloco = 1 cena de 8s para sincronia matemática 1:1!
+        if preserve_1to1_blocks:
+            chunks = [full_spoken] if full_spoken else [""]
+        else:
+            chunks = split_spoken_into_8s_chunks(full_spoken, max_words=18) if full_spoken else [""]
+
         has_user_vis = bool(visual.strip())
 
         for c_idx, ch_txt in enumerate(chunks):
+            if not ch_txt.strip() and not allow_empty_speech:
+                continue
             cam_prefix = camera_angles[c_idx % len(camera_angles)]
             if has_user_vis:
                 varied_vis = f"{cam_prefix} — {visual}" if len(chunks) > 1 else visual
@@ -893,18 +1018,18 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
         return scenes
 
     if "Diálogo" in audio_mode:
-        subject_rule = "Medium two-shot in the exact same room showing the active speaker talking while the other listens silently."
+        subject_rule = f"Two-shot in the authentic setting and era of '{topic_hint or 'the story'}', active speaker talking while listener is silent, period-accurate attire."
     elif char_lock_desc.strip():
         subject_rule = f"Keep character appearance 100% identical across scenes ({char_lock_desc.strip()}), mouths closed."
     elif "Palito" in style_choice:
         subject_rule = "Feature simple white stick figure characters dressed appropriately for the story era."
     elif "Cartoon" in style_choice:
         subject_rule = (
-            "Feature 3D Pixar-style characters with IDENTICAL hair color/style across all scenes, explicit gender, "
+            "Feature 3D stylized animated characters with IDENTICAL hair color/style across all scenes, explicit gender, "
             "and STRICTLY PERIOD-ACCURATE wardrobe matching the story era."
         )
     else:
-        subject_rule = "Cinematic footage matching the exact historical era, real named location, and consistent character appearance, mouths closed."
+        subject_rule = "Cinematic footage matching the exact historical era, real named location (never ocean/beach for inland Minas Gerais cities), and consistent character appearance, mouths closed."
 
     batch_size = 25
     total_batches = math.ceil(len(pending_indices) / batch_size)
@@ -913,7 +1038,7 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
         batch_idxs = pending_indices[start:start + batch_size]
         if progress_placeholder is not None:
             progress_placeholder.info(
-                f"🎬 Diretor Visual IA criando cenários consistentes em inglês (Lote {b_num}/{total_batches})..."
+                f"🎬 Diretor Visual IA criando cenários sincronizados em inglês (Lote {b_num}/{total_batches})..."
             )
 
         lines_in = []
@@ -927,7 +1052,7 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
             f"Character & Wardrobe Lock: {subject_rule}\n\n"
             f"For each numbered item below, write ONE specific 8-second continuous camera shot in ENGLISH (16 to 26 words) "
             f"that visually illustrates the exact action of that narration line. Keep recurring characters' hair color, hairstyle, and outfit 100% identical. "
-            f"STRICTLY NO on-screen text, NO signs, NO modern clothes in ancient stories.\n\n"
+            f"STRICTLY NO on-screen text, NO signs, NO brand names like Pixar/Disney, NO graphic gore, NO modern clothes in ancient stories.\n\n"
             f"Format EVERY output line strictly as:\n"
             f"NUMBER|English visual shot description\n\n"
             f"ITEMS:\n" + "\n".join(lines_in)
@@ -941,7 +1066,7 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
                 m = re.match(r'^\s*(\d+)\s*\|\s*(.+)$', ln.strip())
                 if m:
                     s_num = int(m.group(1))
-                    vis_en = re.sub(r'[\r\n"]+', ' ', m.group(2)).strip(" .-")
+                    vis_en = sanitize_visual_for_veo_safety(re.sub(r'[\r\n"]+', ' ', m.group(2)).strip(" .-"))
                     if len(vis_en) >= 10:
                         parsed_map[s_num] = vis_en
 
@@ -957,12 +1082,12 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     return scenes
 # ===================================================================================
 
-# ================= MOTOR LOCAL FFMPEG.WASM v3.0 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
+# ================= MOTOR LOCAL FFMPEG.WASM v3.1 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
 FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.0</title>
+<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.1</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';document.head.appendChild(s);"></script>
 <style>
@@ -1000,19 +1125,19 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="top-row">
     <div>
-      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.0 (Filtro Anti-Takes Repetidos + 1 Vídeo Único)</strong>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.1 (Sincronia 1:1 + Anti-Takes Repetidos)</strong>
       <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-        Elimina takes duplicados do Google Flow, escolhe sempre o take mais limpo e une <b>950 MB+</b> num único <code>.MP4</code>!
+        Elimina takes duplicados, sincroniza sua própria locução e une <b>950 MB+</b> num único <code>.MP4</code>!
         Cenas no roteiro: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <span class="badge">v3.0 Anti-Duplicatas</span>
+      <span class="badge">v3.1 Blindado</span>
       <button class="btn-sec" id="open-tab-btn" title="Abre em aba exclusiva com 4GB de RAM dedicados do Chrome">🖥️ Abrir em Aba Dedicada (+RAM)</button>
     </div>
   </div>
 
-  <label class="lbl">📜 Roteiro Completo OU conteúdo de <code>Prompts_Flow.txt</code> (Dica: colar o <code>Prompts_Flow.txt</code> garante 100% as mesmas cenas!):</label>
+  <label class="lbl">📜 Roteiro Completo OU conteúdo de <code>Prompts_Flow.txt</code> (Colar o <code>Prompts_Flow.txt</code> garante 100% as mesmas cenas!):</label>
   <textarea id="inp-script" class="script-box" rows="4" placeholder="Cole aqui o roteiro completo (ou cole direto o texto de Prompts_Flow.txt com === CENA 001 ===)..."></textarea>
 
   <div class="grid2">
@@ -1028,7 +1153,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 
       <div class="grid2" style="margin-top:10px;">
         <div>
-          <label class="lbl">🎙️ 2A. Trocar Locução (Opcional):</label>
+          <label class="lbl">🎙️ 2A. Seu Áudio / Locução Principal (Opcional):</label>
           <input type="file" id="inp-voice" accept="audio/*" style="font-size:11.5px;width:100%;color:#cbd5e1;" />
         </div>
         <div>
@@ -1045,9 +1170,9 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div>
       <label class="lbl">🧭 3. Como ordenar e filtrar os clipes no navegador?</label>
       <select id="sel-sort">
-        <option value="whisper">🗣️ Pareamento IA por Voz v3.0 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
-        <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome + Filtro Anti-Mudos Instantâneo</option>
-        <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes (Para vídeos intencionalmente mudos)</option>
+        <option value="whisper">🗣️ Pareamento IA por Voz v3.1 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
+        <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome (Para vídeos gerados mudos)</option>
+        <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes</option>
       </select>
 
       <label class="chk-row" style="margin-top:10px;">
@@ -1061,7 +1186,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
       </label>
 
       <div style="font-size:11.5px;color:#94a3b8;background:#0f172a;padding:8px 10px;border-radius:8px;border:1px solid #334155;margin-top:8px;">
-        🛡️ <b>Trava Anti-Clone v3.0:</b> Se o <code>.ZIP</code> tiver 2 vídeos da mesma cena, o motor fica apenas com o take de pronúncia mais limpa e impede a cópia de entrar em outro round!
+        🎧 <b>Vai usar seu próprio áudio em 2A?</b> Gere os clipes com voz guia no Flow para o Whisper alinhar a ordem exata e suba seu <code>.MP3</code> no campo <b>2A</b> — ele substitui a voz sincronizando tudo!
       </div>
     </div>
   </div>
@@ -1164,12 +1289,11 @@ function splitSpoken8sJS(spokenText, maxWords = 18) {
 
 function parseScriptScenesJS(raw) {
   if (!raw || !raw.trim()) return [];
-  // Se colou o Prompts_Flow.txt (=== CENA 001 === ...: "fala"), extrai 1-para-1 sem refatiar!
   if (/===\s*CENA\s*\d+\s*===/i.test(raw)) {
     const parts = raw.split(/===\s*CENA\s*\d+\s*===/i).map(s => s.trim()).filter(Boolean);
     const direct = [];
     for (const p of parts) {
-      const matches = [...p.matchAll(/"([^"]{4,})"/g)];
+      const matches = [...p.matchAll(/"([^"]{3,})"/g)];
       if (matches.length > 0) {
         direct.push({ spoken: fixPronJS(matches[matches.length - 1][1]) });
       }
@@ -1177,15 +1301,18 @@ function parseScriptScenesJS(raw) {
     if (direct.length > 0) return direct;
   }
 
-  let pre = raw.trim().replace(/(\[(?:CENA|SCENE)\s*:)/gi, "\n\n$1");
-  pre = pre.replace(/((?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM\s*[AB12])\s*(?:\(.*?\))?\s*:)/gi, "\n$1");
+  let pre = raw.trim();
+  pre = pre.replace(/(?<!^)\n*(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])/g, "\n\n$1");
+  pre = pre.replace(/(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])\s*\n+\s*/g, "$1\n");
+  pre = pre.replace(/(\[(?:CENA|SCENE)\s*:[^\]]*\])\s*\n+\s*(?=(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM))/gi, "$1\n");
+
   const blocks = pre.trim().split(/\n\s*\n/);
   const outScenes = [];
   for (const block of blocks) {
     const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
     const spokenParts = [];
     for (const line of lines) {
-      if (/^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?/.test(line)) continue;
+      if (/^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?$/.test(line)) continue;
       if (/^(?:ROUND\s*\d+|ABERTURA|VEREDITO\s+FINAL|ENCERRAMENTO|INTRODU[ÇC][ÃA]O|CAP[ÍI]TULO\s*\d+|PARTE\s*\d+)\b/i.test(line) && !line.includes(":")) continue;
       if (/^\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$/i.test(line)) continue;
       const mSpk = line.match(/^(?:PERSONAGEM\s*(?:A|B|1|2)|LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)/i);
@@ -1194,9 +1321,13 @@ function parseScriptScenesJS(raw) {
     }
     const fullSpoken = spokenParts.filter(Boolean).join(" ").trim();
     if (!fullSpoken) continue;
-    const chunks = splitSpoken8sJS(fullSpoken, 18);
-    for (const ch of chunks) {
-      if (ch) outScenes.push({ spoken: ch });
+    if (CONFIG.preserve1to1) {
+      outScenes.push({ spoken: fullSpoken });
+    } else {
+      const chunks = splitSpoken8sJS(fullSpoken, 18);
+      for (const ch of chunks) {
+        if (ch) outScenes.push({ spoken: ch });
+      }
     }
   }
   return outScenes;
@@ -1351,7 +1482,6 @@ function buildSrt(orderedItems, scenes) {
   return blocks.join("\n");
 }
 
-// ======= MOTOR v3.0: PAREMENTO 1-PARA-1 + BLOQUEIO ABSOLUTO DE TAKES CLONADOS =======
 function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   const numScenes = scenes.length;
   if (!numScenes) {
@@ -1387,7 +1517,6 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
       if (!sNorm) return;
       const rFull = levenshteinRatio(clip.tNorm, sNorm);
       const rSort = tokenSortRatio(clip.tNorm, sNorm);
-      // Peso extra em rFull penaliza takes que têm palavras inventadas pelo Veo no final (ex: "Tamendo", "Padasa")!
       let score = (rFull * 0.62) + (rSort * 0.38);
 
       let rareBonus = 0;
@@ -1420,19 +1549,13 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
   let duplicateTakesRemoved = 0;
 
   for (const p of pairs) {
-    // 1) Exige no mínimo 50% de similaridade real (nunca encaixa clipe por palavras soltas como "Uberlândia")
     if (p.score < 50.0) break;
     if (assigned.has(p.cIdx) || usedScenes.has(p.sIdx)) continue;
 
-    // 2) TRAVA ANTI-DESVIO DE TAKE REPETIDO:
-    // Se este clipe claramente pertence a outra cena (ex: bateu 90% na Cena 7, que já foi preenchida pelo Take 1),
-    // ele está PROIBIDO de cair numa cena aleatória com 52%!
     if (p.sIdx !== bestScenePerClip[p.cIdx] && p.score < (bestScorePerClip[p.cIdx] - 7.5)) {
       continue;
     }
 
-    // 3) DEDUPLICAÇÃO DIRETA CLONE-A-CLONE:
-    // Verifica se a fala deste clipe já é >= 70% idêntica a algum clipe já aceito no vídeo!
     const candNorm = clips[p.cIdx].tNorm;
     let isCloneOfAccepted = false;
     for (const prev of acceptedClipsList) {
@@ -1441,7 +1564,6 @@ function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
         tokenSortRatio(candNorm, prev.tNorm)
       );
       if (clipSim >= 70.0) {
-        // Só permite se no próprio roteiro as duas cenas realmente forem idênticas (>= 75%)
         const scriptSim = levenshteinRatio(sceneNorms[p.sIdx], sceneNorms[prev.sIdx]);
         if (scriptSim < 75.0) {
           isCloneOfAccepted = true;
@@ -1630,7 +1752,7 @@ async function joinScenesIntoSingleMp4(clipsSlice, voiceFile, bgmFile, bgmVol, p
   }
 
   if (voiceFile) {
-    setProgress(progStart + progSpan * 0.90, `🎙️ ${labelPrefix}Aplicando locução principal...`);
+    setProgress(progStart + progSpan * 0.90, `🎙️ ${labelPrefix}Sincronizando sua locução principal...`);
     await yieldUI();
     let ffVoice = await createFreshFFmpegSingleThread();
     try {
@@ -1772,7 +1894,6 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
     const needAudioCheck = (dropMuted && sortMode !== "alpha") || (sortMode === "whisper");
     const sampleRateTarget = 12000;
-    // Barreira de 2.6 segundos de silêncio absoluto entre clipes (slotSeconds = 11) para zero vazamento de palavras!
     const slotSeconds = 11;
     const pcm12kPerClip = new Array(clipEntries.length).fill(null);
 
@@ -1817,7 +1938,6 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 
     let orderedClips = [];
     let discardedCount = 0;
-    let duplicateTakesRemoved = 0;
     let missingScenes = [];
 
     const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && activeScenes.length > 0;
@@ -1868,7 +1988,6 @@ document.getElementById("btn-run").addEventListener("click", async () => {
       const matchRes = assignClipsExclusivelyJS(clipEntries, activeScenes, CONFIG.endKeywords, dropMuted);
       orderedClips = matchRes.kept;
       discardedCount = matchRes.discardedCount;
-      duplicateTakesRemoved = matchRes.duplicateTakesRemoved;
       missingScenes = matchRes.missingScenes;
 
       if (!orderedClips.length && clipEntries.length) {
@@ -1928,7 +2047,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     const sumMB = partBlobs.reduce((acc, b) => acc + b.blob.size, 0) / 1048576;
 
     document.getElementById("dl-summary").innerText =
-      `✅ MONTAGEM v3.0 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
+      `✅ MONTAGEM v3.1 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
       (discardedCount > 0 ? ` | 🧹 ${discardedCount} take(s) repetido(s)/mudo(s) eliminado(s)!` : "");
 
     document.getElementById("dl-missing").innerText = missingScenes.length
@@ -1979,8 +2098,8 @@ document.getElementById("btn-run").addEventListener("click", async () => {
 </html>
 """
 
-def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertical):
-    scenes_parsed = extract_scenes_for_prompts(raw_script, lang_label)
+def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertical, preserve_1to1=False):
+    scenes_parsed = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
     js_scenes = [{"spoken": sc.get("spoken", "")} for sc in scenes_parsed if sc.get("spoken")]
     cfg = {
         "rawScript": raw_script or "",
@@ -1988,7 +2107,8 @@ def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertic
         "groqKey": groq_api_key if (groq_api_key and groq_api_key.startswith("gsk_")) else "",
         "whisperLang": LANGUAGES[lang_label]["whisper_code"],
         "endKeywords": LANGUAGES[lang_label]["end_keywords"],
-        "isVertical": is_vertical
+        "isVertical": is_vertical,
+        "preserve1to1": preserve_1to1
     }
     safe_json = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
     html_out = FFMPEG_WASM_HTML_TEMPLATE.replace("__CONFIG_JSON__", safe_json)
@@ -2003,8 +2123,8 @@ def format_srt_timestamp(seconds_float):
     secs = s_int % 60
     return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
 
-def build_synchronized_srt(ordered_results, raw_script, lang_label):
-    script_scenes = extract_scenes_for_prompts(raw_script, lang_label)
+def build_synchronized_srt(ordered_results, raw_script, lang_label, preserve_1to1=False):
+    script_scenes = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
     srt_blocks = []
     curr_time = 0.0
     sub_idx = 1
@@ -2072,11 +2192,11 @@ def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpe
             continue
     return ""
 
-def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_unmatched=True):
+def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_unmatched=True, preserve_1to1=False):
     from rapidfuzz import fuzz
     from collections import Counter
 
-    script_scenes = extract_scenes_for_prompts(raw_script, lang_label)
+    script_scenes = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
     scene_norms = [normalize_text(sc.get("spoken", "")) for sc in script_scenes]
     num_scenes = len(scene_norms)
 
@@ -2136,7 +2256,7 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
                 max_sc, max_s = score, s_idx
             candidate_pairs.append((score, c_idx, s_idx))
 
-        best_per_clip[c_idx] = (max_s, max_sc)
+        best_per_clip[cIdx if 'cIdx' in locals() else c_idx] = (max_s, max_sc)
 
     candidate_pairs.sort(key=lambda x: x[0], reverse=True)
 
@@ -2196,7 +2316,7 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
 is_admin = (st.session_state.get("user_role") == "admin")
 col_hdr1, col_hdr2 = st.columns([5, 1])
 with col_hdr1:
-    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.0 & SEO")
+    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.1 & SEO")
 with col_hdr2:
     st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
     if st.button("🔒 Sair", use_container_width=True):
@@ -2210,14 +2330,14 @@ try:
 except Exception:
     tutorial_url = ""
 
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Como montar vídeos gigantes (950MB+) sem cenas repetidas"):
+with st.expander("▶️ PASSO A PASSO RÁPIDO: Qual Modo escolher (Narrador, Diálogo ou Seu Próprio Áudio)"):
     if tutorial_url:
         st.video(tutorial_url)
     st.markdown(
-        "1. **Ative sua Chave Grátis (1x só):** Acesse **[console.groq.com/keys](https://console.groq.com/keys)**, crie a chave `gsk_...` e cole no topo.\n"
-        "2. **Crie ou Cole Qualquer Roteiro (Aba 1):** O sistema fatia em cenas de 8s, trava aparência fixa de personagens e gera prompts em linha única.\n"
-        "3. **No Google Flow:** Use **Veo 3 (com Áudio ligado)**, escolha **1 vídeo por prompt** e envie pela **Extensão VIP v2.0**.\n"
-        "4. **Montagem v3.0 Anti-Duplicatas (Aba 2):** Cole o roteiro (ou o próprio `Prompts_Flow.txt`) na Aba 2 e escolha seu `.ZIP` — o filtro descarta takes clonados e escolhe sempre o take com pronúncia mais limpa!"
+        "* **🎙️ Modo 1 (Narrador Fixo):** Ideal para histórias bíblicas (ex: *Davi e Golias*), documentários de cidades e curiosidades.\n"
+        "* **🗣️ Modo 2 (Diálogo Entre Personagens):** Para 2 personagens conversando com Lip-Sync (se deixar as caixas no padrão ou vazias, a IA adapta os personagens ao tema automaticamente!).\n"
+        "* **🎧 Modo 3 (Seu Próprio Áudio):** Suba seu `.MP3/.WAV` gravado — a IA fatia de 8 em 8s com trava 1-para-1, cria os cenários exatos da sua fala e troca pela sua voz na Aba 2!\n"
+        "* **💡 No Google Flow:** Envie pela **Extensão VIP v2.0** (ou de 5 em 5 cenas se colar no chat lateral) para nunca cair no limite de alta demanda."
     )
 
 col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
@@ -2255,7 +2375,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "⚡ 2. Montagem Local FFmpeg.wasm v3.0 (Zero Takes Repetidos)",
+    "⚡ 2. Montagem Local FFmpeg.wasm v3.1 (Zero Repetições)",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -2271,7 +2391,7 @@ with tab1:
         )
     with cf_btn2:
         st.download_button(
-            "🧩 Baixar Extensão Chrome VIP v2.0 (Linha Única — Áudio PT-BR Garantido)",
+            "🧩 Baixar Extensão Chrome VIP v2.0 (Linha Única — Evita Limite de Alta Demanda)",
             data=build_chrome_extension_zip(),
             file_name="Extensao_VIP_Estudio_Pro_Flow_v2.zip",
             mime="application/zip",
@@ -2282,9 +2402,9 @@ with tab1:
     audio_mode = st.radio(
         "Como será o áudio e a atuação deste vídeo?",
         [
-            "🎙️ Modo 1: Narrador Fixo (Trava Absoluta da Mesma Voz do Início ao Fim)",
-            "🗣️ Modo 2: Diálogo Entre Personagens (Upload de Fotos + DNA Físico/Vocal Fixo + Lip-Sync)",
-            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Cenas sincronizadas + troca na montagem)"
+            "🎙️ Modo 1: Narrador Fixo (Ideal p/ Histórias Bíblicas, Documentários e Contos — Mesma Voz do Início ao Fim)",
+            "🗣️ Modo 2: Diálogo Entre Personagens (2 Personagens Conversando com Lip-Sync)",
+            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Sincronia 1:1 de 8 em 8s + Troca na Montagem)"
         ]
     )
 
@@ -2300,20 +2420,31 @@ with tab1:
                 voice_choice = st.radio("Gênero da Voz Fixa:", ["🎙️ Voz Masculina Fixa (Barítono 35 anos)", "🎙️ Voz Feminina Fixa (Mezzo-Soprano 32 anos)"])
                 custom_voice_timbre = st.text_input("Assinatura extra de voz (Opcional):", placeholder="Ex: Sotaque mineiro acolhedor, ritmo calmo")
             else:
-                ref_audio_file = st.file_uploader("🎵 Opcional: Suba seu áudio (.mp3, .wav, .m4a) para transcrever de 8 em 8s:", type=["mp3", "wav", "m4a", "ogg"])
-                mute_flow_for_custom = st.checkbox("Gerar vídeos mudos no Flow", value=False)
+                ref_audio_file = st.file_uploader("🎵 Suba seu áudio gravado (.mp3, .wav, .m4a) para fatiar de 8 em 8s:", type=["mp3", "wav", "m4a", "ogg"])
+                mute_flow_for_custom = st.checkbox(
+                    "Gerar vídeos mudos no Flow (Dica: deixe DESMARCADO para o Whisper alinhar a ordem exata na Aba 2 antes de trocar pelo seu áudio!)",
+                    value=False
+                )
                 if ref_audio_file is not None:
-                    if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO DE 8 EM 8 SEGUNDOS", use_container_width=True):
-                        with st.spinner("Transcrevendo seu áudio em blocos de 8 segundos..."):
+                    if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO SINCRONIZADO (8 EM 8s)", type="primary", use_container_width=True):
+                        with st.spinner("Transcrevendo seu áudio em janelas cravadas de 8.0 segundos (Whisper Turbo)..."):
                             ffmpeg_exe = get_ffmpeg()
                             tmp_dir_a = tempfile.mkdtemp()
                             try:
                                 tmp_aud = os.path.join(tmp_dir_a, ref_audio_file.name)
                                 with open(tmp_aud, "wb") as fa:
                                     fa.write(ref_audio_file.getbuffer())
-                                t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(tmp_aud, LANGUAGES[selected_lang]["sr_code"], ffmpeg_exe)
+                                t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(
+                                    tmp_aud,
+                                    LANGUAGES[selected_lang]["sr_code"],
+                                    LANGUAGES[selected_lang]["whisper_code"],
+                                    active_api_key,
+                                    ffmpeg_exe
+                                )
                                 st.session_state["saved_script"] = t_script
-                                st.success(f"✅ Áudio transcrito ({dur_s:.1f}s -> {n_sc} cenas)!")
+                                st.session_state["custom_audio_1to1_lock"] = True
+                                st.session_state["auto_duration_min"] = max(1, math.ceil(dur_s / 60.0))
+                                st.success(f"✅ Áudio transcrito ({dur_s:.1f}s ➔ {n_sc} cenas exatas de 8s)! Agora clique no botão azul lá embaixo para o Diretor Visual criar as imagens de cada trecho.")
                             finally:
                                 shutil.rmtree(tmp_dir_a, ignore_errors=True)
         with cm2:
@@ -2337,7 +2468,7 @@ with tab1:
 
     elif "Modo 2" in audio_mode:
         orient_label = "9:16" if is_vertical else "16:9"
-        st.info(f"💡 **Trava Dupla de Identidade ({orient_label}):** Suba a foto do Personagem A e B abaixo! A IA extrai os detalhes e monta o **Cartão Duplo {orient_label}** para subir como *Ingredient* no Google Flow.")
+        st.info(f"💡 **Modo Diálogo Inteligente ({orient_label}):** Suba fotos abaixo OU apenas digite o tema no Passo 2 (se deixar os campos vazios ou no exemplo padrão, a IA adapta os 2 personagens e as vozes automaticamente para a época do tema!).")
         up_col1, up_col2 = st.columns([1, 1])
         with up_col1:
             up_char_a = st.file_uploader("📸 Subir Foto do Personagem A (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_a")
@@ -2381,17 +2512,17 @@ with tab1:
 
         cd1, cd2 = st.columns([1, 1])
         with cd1:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=105)
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=95)
             st.text_input("🎙️ Trava de Voz — Personagem A:", key="voice_char_a")
         with cd2:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=105)
+            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=95)
             st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
 
     st.divider()
     st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA ou Colar Qualquer Roteiro / Texto Puro")
     col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
     with col_t1:
-        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: Juiz de Fora vs Uberlândia / A História de Davi e Golias")
+        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
     with col_t2:
         duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
     with col_t3:
@@ -2407,6 +2538,23 @@ with tab1:
             if not video_title.strip():
                 st.warning("Digite o tema ou situação primeiro.")
             else:
+                st.session_state["custom_audio_1to1_lock"] = False
+                # Se estiver no Modo 2 com campos vazios OU ainda no exemplo padrão Pai/Filha, adapta automaticamente ao tema!
+                cur_a = st.session_state.get("dna_char_a", "").strip()
+                cur_b = st.session_state.get("dna_char_b", "").strip()
+                if "Modo 2" in audio_mode and not has_ref_image and (
+                    not cur_a or not cur_b or (cur_a == DEFAULT_CHAR_A and cur_b == DEFAULT_CHAR_B)
+                ):
+                    with st.spinner(f"🎭 Criando ficha física e vocal dos personagens de '{video_title}'..."):
+                        adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
+                        if adapted:
+                            st.session_state["dna_char_a"] = adapted["DNA_A"]
+                            st.session_state["dna_char_b"] = adapted["DNA_B"]
+                            if "VOICE_A" in adapted:
+                                st.session_state["voice_char_a"] = adapted["VOICE_A"]
+                            if "VOICE_B" in adapted:
+                                st.session_state["voice_char_b"] = adapted["VOICE_B"]
+
                 with st.spinner(f"Criando roteiro linear cronológico ({total_scenes_calc} cenas)..."):
                     script_out, err_msg = generate_ai_script(
                         video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_short,
@@ -2417,11 +2565,15 @@ with tab1:
                         st.error(err_msg)
                     else:
                         st.session_state["saved_script"] = script_out
-                        st.success("✅ Roteiro linear gerado com sucesso!")
+                        st.rerun()
 
         auto_director_enabled = st.checkbox(
             "🎬 Diretor Visual + Auto-DNA de Elenco (Trava cabelo/roupa automaticamente mesmo sem foto)",
             value=True
+        )
+        lock_1to1_mode = st.checkbox(
+            "🔒 Trava 1-para-1 de Blocos (Mantém exatamente 1 cena de 8s por bloco de tempo — Ideal para Áudio Próprio)",
+            value=("Modo 3" in audio_mode or st.session_state.get("custom_audio_1to1_lock", False))
         )
 
     with cs2:
@@ -2436,7 +2588,28 @@ with tab1:
             st.warning("Gere ou cole um roteiro/texto primeiro.")
         else:
             st.session_state["saved_script"] = script_for_prompts
-            scenes = extract_scenes_for_prompts(script_for_prompts, selected_lang)
+            is_silent_custom = ("Modo 3" in audio_mode and mute_flow_for_custom)
+            scenes = extract_scenes_for_prompts(
+                script_for_prompts,
+                selected_lang,
+                preserve_1to1_blocks=lock_1to1_mode,
+                allow_empty_speech=is_silent_custom
+            )
+
+            # Se estiver no Modo 2 e o usuário apagou os personagens manualmente, gera automaticamente pelo tema!
+            if "Modo 2" in audio_mode and video_title.strip() and active_api_key:
+                ca_now = st.session_state.get("dna_char_a", "").strip()
+                cb_now = st.session_state.get("dna_char_b", "").strip()
+                if not ca_now or not cb_now:
+                    with st.spinner(f"🎭 Preenchendo aparência e vozes fiéis à época para '{video_title}'..."):
+                        adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
+                        if adapted:
+                            st.session_state["dna_char_a"] = adapted["DNA_A"]
+                            st.session_state["dna_char_b"] = adapted["DNA_B"]
+                            if "VOICE_A" in adapted:
+                                st.session_state["voice_char_a"] = adapted["VOICE_A"]
+                            if "VOICE_B" in adapted:
+                                st.session_state["voice_char_b"] = adapted["VOICE_B"]
 
             effective_char_lock = st.session_state.get("dna_single_char", "").strip()
             if not effective_char_lock and "Modo 2" not in audio_mode and auto_director_enabled and active_api_key:
@@ -2471,30 +2644,36 @@ with tab1:
             ref_tag = "Match uploaded reference character image(s). " if has_ref_image else ""
 
             est_mins = round((len(scenes) * 8) / 60.0, 1)
-            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Aparência, Época e Idioma travados!")
+            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Zero Cenas Vazias & Protegidas contra Bloqueio!")
             all_prompts_text = []
 
             for idx, sc in enumerate(scenes, 1):
                 clean_spoken = fix_pronunciation(sc["spoken"].replace('"', "'").strip(), selected_lang)
+                safe_vis = sanitize_visual_for_veo_safety(sc["visual"])
+
                 if "Modo 2" in audio_mode:
                     is_a = (sc["speaker"] != "B")
                     active_char = "Character A" if is_a else "Character B"
                     silent_char = "Character B" if is_a else "Character A"
-                    active_voice = st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")
-                    dna_a_txt = st.session_state.get("dna_char_a", DEFAULT_CHAR_A)
-                    dna_b_txt = st.session_state.get("dna_char_b", DEFAULT_CHAR_B)
+                    active_voice = (st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")).strip() or "expressive native voice"
+                    dna_a_txt = st.session_state.get("dna_char_a", "").strip()
+                    dna_b_txt = st.session_state.get("dna_char_b", "").strip()
+                    cast_prefix = ""
+                    if dna_a_txt:
+                        cast_prefix += f"Character A: {dna_a_txt}. "
+                    if dna_b_txt:
+                        cast_prefix += f"Character B: {dna_b_txt}. "
                     raw_p = (
-                        f"{aspect_short}. {visual_anchor} {ref_tag}"
-                        f"Character A: {dna_a_txt}. Character B: {dna_b_txt}. "
-                        f"Scene action: {sc['visual']}. ONLY {active_char} moves mouth with natural lip-sync while {silent_char} listens silently. "
+                        f"{aspect_short}. {visual_anchor} {ref_tag}{cast_prefix}"
+                        f"Scene action: {safe_vis}. ONLY {active_char} moves mouth with natural lip-sync while {silent_char} listens silently. "
                         f"AUDIO RULE (MANDATORY AUDIBLE SPEECH IN {lang_en_name}, ZERO SILENT VIDEO, ZERO ENGLISH, zero music): "
                         f"{active_char} ({active_voice}) speaks clearly in native {lang_en_name}: \"{clean_spoken}\""
                     )
-                elif "Modo 3" in audio_mode and mute_flow_for_custom:
+                elif is_silent_custom:
                     char_clause = f"Character Appearance Lock: {effective_char_lock}. " if effective_char_lock else ""
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {sc['visual']}. Characters keep mouths closed in silence. "
+                        f"Scene action: {safe_vis}. Characters keep mouths closed in silence. "
                         f"AUDIO RULE: Silent ambient sound only, zero speech, zero narration, zero music."
                     )
                 else:
@@ -2502,7 +2681,7 @@ with tab1:
                     voice_short = get_compact_voice_profile(voice_choice, custom_voice_timbre)
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {sc['visual']}. Characters on screen DO NOT speak and keep mouths closed (off-screen studio narration). "
+                        f"Scene action: {safe_vis}. Characters on screen DO NOT speak and keep mouths closed (off-screen studio narration). "
                         f"VOICE & LANGUAGE LOCK (MANDATORY AUDIBLE VOICEOVER IN {lang_en_name}, NEVER MUTE, ZERO EXTRA WORDS, ZERO ENGLISH, zero music): "
                         f"{voice_short} speaks ONLY this exact line in native {lang_en_name}: \"{clean_spoken}\""
                     )
@@ -2525,14 +2704,16 @@ with tab2:
     engine_choice = st.radio(
         "⚙️ Escolha onde processar os vídeos:",
         [
-            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.0 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
+            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.1 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
             "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB)"
         ],
         index=0
     )
 
+    is_1to1_active = bool(st.session_state.get("custom_audio_1to1_lock", False))
+
     if "FFmpeg.wasm" in engine_choice:
-        render_ffmpeg_wasm_assembler(st.session_state.get("saved_script", ""), selected_lang, active_api_key, is_vertical)
+        render_ffmpeg_wasm_assembler(st.session_state.get("saved_script", ""), selected_lang, active_api_key, is_vertical, preserve_1to1=is_1to1_active)
     else:
         roteiro_input = st.text_area(
             "📜 Roteiro Completo ou Prompts_Flow.txt (Usado para alinhar as cenas e gerar a legenda .SRT):",
@@ -2561,7 +2742,7 @@ with tab2:
             sort_method = st.radio(
                 "Como ordenar os clipes antes de juntar?",
                 [
-                    "🗣️ Pareamento Exclusivo v3.0 Anti-Duplicatas",
+                    "🗣️ Pareamento Exclusivo v3.1 Anti-Duplicatas",
                     "🔢 Ordenar apenas pelo nome dos arquivos"
                 ]
             )
@@ -2576,7 +2757,7 @@ with tab2:
             )
             ca_mix1, ca_mix2 = st.columns([1, 1])
             with ca_mix1:
-                master_custom_audio = st.file_uploader("🎙️ Trocar Voz Principal (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
+                master_custom_audio = st.file_uploader("🎙️ Trocar Voz Principal / Seu Áudio (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
             with ca_mix2:
                 bg_music_file = st.file_uploader("🎵 Música de Fundo (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_bgm")
 
@@ -2599,9 +2780,6 @@ with tab2:
                     wait_box.empty()
                     ffmpeg_exe = get_ffmpeg()
                     work_dir = tempfile.mkdtemp()
-                    target_w = 720 if is_vertical else 1280
-                    target_h = 1280 if is_vertical else 720
-                    scale_filter = f"scale={target_w}:{target_h}:force_original_aspect_ratio=decrease,pad={target_w}:{target_h}:(ow-iw)/2:(oh-ih)/2,fps=30"
 
                     try:
                         extract_dir = os.path.join(work_dir, "extraidos")
@@ -2644,7 +2822,6 @@ with tab2:
                             p_bar = st.progress(0, text="Transcrevendo cenas...")
                             total = len(mp4_files)
                             discarded_list = []
-                            missing_scenes = []
 
                             if "Pareamento" in sort_method:
                                 recognizer = sr.Recognizer()
@@ -2658,8 +2835,8 @@ with tab2:
                                     if idx % 15 == 0:
                                         gc.collect()
                                     p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:40] or '[Sem fala]'}'")
-                                results, discarded_list, missing_scenes = assign_clips_to_scenes_exclusively(
-                                    raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups
+                                results, discarded_list, _ = assign_clips_to_scenes_exclusively(
+                                    raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups, preserve_1to1=is_1to1_active
                                 )
                                 for dc in discarded_list:
                                     try:
@@ -2668,7 +2845,6 @@ with tab2:
                                         pass
                                 if not results and discarded_list:
                                     results = sorted(discarded_list, key=lambda x: x["original_name"].lower())
-                                    discarded_list = []
                             else:
                                 mp4_files.sort(key=lambda p: os.path.basename(p).lower())
                                 results = []
@@ -2682,7 +2858,7 @@ with tab2:
                                     p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
 
                             if results:
-                                srt_content = build_synchronized_srt(results, roteiro_input, selected_lang)
+                                srt_content = build_synchronized_srt(results, roteiro_input, selected_lang, preserve_1to1=is_1to1_active)
                                 srt_file_path = os.path.join(work_dir, "legendas.srt")
                                 with open(srt_file_path, "w", encoding="utf-8") as sf:
                                     sf.write(srt_content)
@@ -2836,4 +3012,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v3.0 COMPLETO (ANTI-CLONE DE TAKES DUPLICADOS + 1 VIDEO UNICO)
+# FIM DO ARQUIVO SAAS ULTIMATE v3.1 COMPLETO (MODO 2 AUTO-ELENCO + MODO 3 SINCRONIA 1:1 + ANTI-BLOQUEIO VEO)
