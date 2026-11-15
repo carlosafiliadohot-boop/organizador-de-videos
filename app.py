@@ -126,7 +126,7 @@ for k_def, v_def in {
     if k_def not in st.session_state:
         st.session_state[k_def] = v_def
 
-# Aplica atualizações pendentes ANTES de qualquer widget ser instanciado na página!
+# Aplica sincronizações pendentes ANTES de instanciar qualquer widget
 if st.session_state.get("_pending_cast_sync"):
     for _pk, _pv in st.session_state["_pending_cast_sync"].items():
         st.session_state[_pk] = _pv
@@ -171,7 +171,7 @@ LANGUAGES = {
 
 STYLE_PRESETS = {
     "Cinematográfico Realista 4K": (
-        "Photorealistic 4K cinema footage, natural cinematic lighting, strictly period-accurate wardrobe and setting, single continuous camera shot, zero text or signs on screen."
+        "Photorealistic 4K documentary B-roll cinema footage, natural lighting, authentic local geography and climate, single continuous camera shot, strictly ZERO on-screen text, ZERO signs/scoreboards, ZERO TV presenters."
     ),
     "Cartoon 3D Pixar": (
         "High-end 3D stylized animated feature film look, vibrant colors, soft global illumination, fictional animated characters wearing strictly period-accurate clothing faithful to the story era (zero modern caps or anachronistic clothes), single continuous shot, zero text on screen."
@@ -322,7 +322,8 @@ def build_chrome_extension_zip():
         zf.writestr("Extensao_Estudio_Pro_Flow_v2/COMO_INSTALAR.txt", readme_str)
     return mem_zip.getvalue()
 
-def sanitize_visual_for_veo_safety(vis_en):
+def sanitize_visual_for_veo_safety(vis_en, is_narration_broll=False):
+    """Remove gatilhos de bloqueio e elimina âncoras de TV, neve no Brasil, placares falhados e botões YouTube."""
     if not vis_en:
         return ""
     s = vis_en
@@ -330,6 +331,15 @@ def sanitize_visual_for_veo_safety(vis_en):
     s = re.sub(r'\bDisney\b', 'animated', s, flags=re.IGNORECASE)
     s = re.sub(r'\b(?:dead|corpse|bloody|bleeding|kills|killing)\b', 'defeated', s, flags=re.IGNORECASE)
     s = re.sub(r'\blies motionless\b', 'kneels defeated on the ground', s, flags=re.IGNORECASE)
+    if is_narration_broll:
+        # Impede neve em cidades brasileiras, apresentadores de TV, joinha e placas com texto errado!
+        s = re.sub(r'\b(?:snow|snowy|snowfall|blizzard|frost|icy|freezing snow)\b', 'cool misty mountain morning', s, flags=re.IGNORECASE)
+        s = re.sub(
+            r'\b(?:presenter|host|anchor|newsreader|youtuber|influencer|man speaking to camera|person speaking|thumbs up|subscribe button|scoreboard|whiteboard|map with labels|split screen)\b',
+            'scenic aerial panoramic drone view',
+            s,
+            flags=re.IGNORECASE
+        )
     return re.sub(r'\s+', ' ', s).strip()
 
 def fix_pronunciation(text, lang_label):
@@ -412,13 +422,13 @@ def get_compact_voice_profile(gender_choice, custom_voice_desc=""):
     extra = f", {custom_voice_desc.strip()}" if custom_voice_desc.strip() else ""
     if "Masculina" in gender_choice:
         return (
-            f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult male studio narrator "
-            f"(deep chest-resonant baritone 115 Hz, warm studio mic{extra}; ZERO silence, ZERO extra improvised words, "
+            f"MANDATORY CONTINUOUS OFF-SCREEN VOICEOVER by the EXACT SAME adult male studio narrator "
+            f"(deep chest-resonant baritone 115 Hz, warm studio mic{extra}; ZERO on-camera host/presenter, ZERO silence, ZERO extra improvised words, "
             f"NEVER use female or child voices)"
         )
     return (
-        f"MANDATORY CONTINUOUS VOICEOVER by the EXACT SAME adult female studio narrator "
-        f"(smooth mezzo-soprano 195 Hz, warm studio mic{extra}; ZERO silence, ZERO extra improvised words, "
+        f"MANDATORY CONTINUOUS OFF-SCREEN VOICEOVER by the EXACT SAME adult female studio narrator "
+        f"(smooth mezzo-soprano 195 Hz, warm studio mic{extra}; ZERO on-camera host/presenter, ZERO silence, ZERO extra improvised words, "
         f"NEVER use male or child voices)"
     )
 
@@ -626,7 +636,7 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api
 
     try:
         if clean_key.startswith("gsk_"):
-            wav_full = os.path.join(work_dir, "full_16k.wav")
+            wav_full = os.path.join(work_dir, "full_12k.wav")
             subprocess.run(
                 [ffmpeg_exe, '-y', '-i', audio_path, '-vn', '-acodec', 'pcm_s16le', '-ar', '12000', '-ac', '1', wav_full],
                 stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL
@@ -663,7 +673,7 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api
                             start_s = i * 8
                             spoken_piece = " ".join(buckets[i]).strip()
                             if not spoken_piece:
-                                spoken_piece = f"Continuação instrumental e visual da cena {i + 1}"
+                                spoken_piece = f"Continuação instrumental e paisagem cinematográfica da cena {i + 1}"
                             t1 = f"{start_s // 60:02d}:{start_s % 60:02d}"
                             t2 = f"{(start_s + 8) // 60:02d}:{(start_s + 8) % 60:02d}"
                             blocks.append(f"[{t1} - {t2}]\nLOCUÇÃO: {re.sub(r'\\s+', ' ', spoken_piece)}")
@@ -696,9 +706,9 @@ def generate_auto_cast_dna(topic, raw_script_sample, style_choice, api_key):
         return ""
     p_cast = (
         f"Analyze the topic '{topic}' and script excerpt below:\n{raw_script_sample[:1800]}\n\n"
-        f"Does this video feature specific recurring characters (like biblical figures, historical characters, or a protagonist)?\n"
-        f"- If NO (pure city/nature/geography documentary without recurring characters): output ONLY the word NONE.\n"
-        f"- If YES: write ONE concise English Lock Sheet (max 45 words total) defining the fictionalized animated/cinematic appearance: EXACT unchanging hairstyle, hair color, skin tone, age, biological sex, and period-accurate outfit color for the 1 or 2 main recurring characters so they look 100% identical in every scene (NEVER use modern clothes in ancient stories, NEVER mention celebrity names).\n"
+        f"Is this a narrative story featuring 1 or 2 specific named recurring human/animated protagonists (e.g., David & Goliath, a specific family story)?\n"
+        f"- If NO (city comparison, geography, curiosity list, economy, nature, history overview, or general documentary): output ONLY the word NONE.\n"
+        f"- If YES: write ONE concise English Lock Sheet (max 45 words total) defining the fictionalized appearance: EXACT unchanging hairstyle, hair color, skin tone, age, biological sex, and period-accurate outfit color for the 1 or 2 main recurring characters (NEVER use modern clothes in ancient stories, NEVER invent a TV host/narrator character!).\n"
         f"Output ONLY 'NONE' or the single-line English character lock description."
     )
     out, err = call_llm_text("Output ONLY 'NONE' or a concise single-line English character visual lock.", p_cast, clean_key, temperature=0.1)
@@ -742,13 +752,13 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
             f"Character A: {ca_info}\n"
             f"Character B: {cb_info}\n\n"
             f"RULES:\n"
-            f"1. STRICT CHRONOLOGICAL PROGRESSION (ZERO REPETITION): Never repeat questions or opening lines. Every scene MUST advance the story forward from setup to resolution.\n"
-            f"2. ERA-APPROPRIATE SETTING (NEVER ANACHRONISTIC ROOMS): Set every [CENA: ...] in the authentic location of '{title}' (e.g., ancient sunlit valley/camp for biblical stories, NEVER an indoor modern room or men in suits unless the topic is modern!).\n"
-            f"3. NATIVE SPEECH & ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B speaking authentic {lang_en} (12 to 17 words per scene, native translated names like 'Davi' and 'Golias').\n"
-            f"4. NO BLANK LINES INSIDE A SCENE BLOCK: Keep [00:00 - 00:08], [CENA: ...], and PERSONAGEM A/B together in the same block!\n\n"
+            f"1. STRICT CHRONOLOGICAL PROGRESSION (ZERO REPETITION): Every scene MUST advance the story forward from setup to resolution.\n"
+            f"2. ERA-APPROPRIATE SETTING: Set every [CENA: ...] in the authentic location of '{title}' (NEVER an indoor modern room unless modern).\n"
+            f"3. NATIVE SPEECH & ONE SPEAKER PER SCENE: Alternate PERSONAGEM A and PERSONAGEM B speaking authentic {lang_en} (12 to 17 words per scene).\n"
+            f"4. NO BLANK LINES INSIDE A SCENE BLOCK.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Continuous two-shot in the authentic setting of the story in English, active speaker talking while listener is silent, zero text]\n"
+            f"[CENA: Continuous shot in the authentic setting of the story in English, active speaker talking, zero text]\n"
             f"PERSONAGEM A: Authentic line in {lang_en} (12-17 words, zero abbreviations)."
         )
     else:
@@ -762,25 +772,28 @@ def generate_ai_script(title, num_scenes, lang_label, style_choice, audio_mode, 
                 "(e.g., ancient woven tunics/sandals for biblical stories, NEVER modern caps, suits, or t-shirts)"
             )
         else:
-            char_hint = "period-accurate cinematic documentary footage of the real location, historical era, or consistent characters"
+            char_hint = (
+                "pure cinematic documentary B-roll footage of real architecture, streets, green mountains, parks, campuses, or historical locations "
+                "(STRICTLY ZERO TV presenters/hosts, ZERO people doing thumbs up, ZERO scoreboards/maps/text, ZERO snow in Brazil, ZERO ocean in inland states like Minas Gerais)"
+            )
 
         prompt_text = (
             f"You are a master storyteller and fact-checked documentary screenwriter.\n"
             f"Topic / Story Title: '{title}'\n"
             f"Total Scenes: Write EXACTLY {num_scenes} scenes (8 seconds per scene).\n\n"
-            f"CRITICAL STORYTELLING, CHARACTER HAIR/OUTFIT LOCK & NATIVE NAMES RULES:\n"
-            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Scene 1 = initial setup; early scenes = preparation/background; middle scenes = confrontation; late scenes = climax/action; penultimate scene = victory/resolution; Scene {num_scenes} = Call-to-Action.\n"
-            f"2. UNCHANGING CHARACTER APPEARANCE: If characters appear, choose ONE exact hair color/style, age, gender, and period-accurate outfit for each character and repeat those EXACT traits in every [CENA: ...] where they appear. Visuals feature {char_hint}. Avoid graphic gore words (use 'defeated on the ground' instead of 'dead/corpse').\n"
-            f"3. 100% NATIVE NAMES IN {lang_en}: In LOCUÇÃO, ALWAYS write proper names translated into {lang_en} (e.g., write 'Davi' and 'Golias' in Portuguese, NEVER 'David' or 'Goliath', and NEVER write normal words in ALL CAPS).\n"
-            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (14 to 18 words) a complete, natural phrase. All characters on screen keep mouths closed.\n\n"
+            f"CRITICAL STORYTELLING & PURE DOCUMENTARY B-ROLL RULES:\n"
+            f"1. STRICT LINEAR CHRONOLOGY (1 TO {num_scenes}): Setup -> Development -> Climax -> Resolution -> Call-to-Action.\n"
+            f"2. PURE CINEMATIC VISUALS: Feature {char_hint}. Even during score updates or Call-to-Action ('like/subscribe/comment'), [CENA:] MUST show sweeping sunset drone shots or landmarks — NEVER show a presenter, YouTuber, scoreboard, map, or subscribe button!\n"
+            f"3. 100% NATIVE NAMES IN {lang_en}: Write proper names translated into {lang_en} (never write normal words in ALL CAPS).\n"
+            f"4. DISTINCT VOCABULARY PER SCENE: Make each LOCUÇÃO (14 to 18 words) a complete, natural phrase. All people on screen keep mouths closed.\n\n"
             f"EXACT OUTPUT FORMAT FOR ALL {num_scenes} SCENES (separated by one blank line, ZERO blank lines between [CENA:] and LOCUÇÃO:):\n"
             f"[00:00 - 00:08]\n"
-            f"[CENA: Single continuous shot in English repeating exact character hair/gender/period outfit and action, mouths closed, zero text]\n"
-            f"LOCUÇÃO: Engaging narration in {lang_en} using native translated names (14-18 words)."
+            f"[CENA: Single continuous B-roll shot in English, authentic geography/era, mouths closed, zero text/signs]\n"
+            f"LOCUÇÃO: Engaging narration in {lang_en} (14-18 words)."
         )
 
     temp_val = 0.35 if "Diálogo" in audio_mode else 0.22
-    sys_msg = "Output ONLY the requested formatted script scenes in strict linear chronological order with unchanging character hair and wardrobe."
+    sys_msg = "Output ONLY the requested formatted script scenes in strict linear chronological order with pure B-roll visuals and zero on-screen text."
     out, err = call_llm_text(sys_msg, prompt_text, api_key, temperature=temp_val)
     if err:
         return "", err
@@ -812,7 +825,7 @@ def generate_seo_and_thumbnail_kit(title, script_text, lang_label, aspect_label,
     sys_msg = "You are a YouTube & TikTok viral growth strategist."
     return call_llm_text(sys_msg, seo_prompt, api_key, temperature=0.5)
 
-# ======= AUTO-FATIADOR + DIRETOR VISUAL AUTOMÁTICO PARA ROTEIROS ENVIADOS =======
+# ======= AUTO-FATIADOR + DIRETOR VISUAL B-ROLL PURO =======
 def split_spoken_into_8s_chunks(spoken_text, max_words=18):
     words_total = spoken_text.split()
     if len(words_total) <= max_words + 2:
@@ -862,8 +875,12 @@ def split_spoken_into_8s_chunks(spoken_text, max_words=18):
             merged.append(ch)
     return merged
 
-def clean_visual_for_flow(vis_text):
+def clean_visual_for_flow(vis_text, is_narration=True):
     if not vis_text:
+        return ""
+    # Se o [CENA:] do usuário pedia placar piscando, tela dividida com texto, mapa com nomes ou tela final do canal, força o Diretor IA a substituir por B-Roll cinematográfico real!
+    bad_ui_triggers = r'(?:placar|tela\s+final|tela\s+dividida|bot[ãa]o\s+de\s+inscri|mapa\s+mostrando|texto\s+na\s+tela|letreiro)'
+    if is_narration and re.search(bad_ui_triggers, vis_text, flags=re.IGNORECASE):
         return ""
     v = re.sub(
         r'(?:texto|placar)[^,\]]*?(?:na tela|piscando|animado)\s*:?\s*["“”]?.*?["“”]?(?:$|\+|/)',
@@ -871,7 +888,7 @@ def clean_visual_for_flow(vis_text):
         vis_text,
         flags=re.IGNORECASE
     ).strip(" /+-:,")
-    return sanitize_visual_for_veo_safety(v) if len(v) >= 6 else ""
+    return sanitize_visual_for_veo_safety(v, is_narration_broll=is_narration) if len(v) >= 6 else ""
 
 def looks_non_english_visual(text):
     if not text:
@@ -881,7 +898,7 @@ def looks_non_english_visual(text):
     pt_markers = r'\b(vista|aérea|imagem|imagens|tela|dividida|prédios|cidade|ruas|morros|carretas|comércio|feiras|padarias|pôr do sol|câmera|mostrando|pessoas|famílias|centro|bairro|menino|gigante|pedra|vale)\b'
     return bool(re.search(pt_markers, text, flags=re.IGNORECASE))
 
-def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=False, allow_empty_speech=False):
+def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=False, allow_empty_speech=False, is_narration=True):
     if not raw_script or not raw_script.strip():
         return []
 
@@ -919,11 +936,11 @@ def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=Fals
 
     blocks = re.split(r'\n\s*\n', pre.strip())
     camera_angles = [
-        "Wide cinematic establishing shot",
+        "Wide cinematic establishing drone shot",
         "Smooth tracking camera shot",
-        "Medium expressive cinematic shot",
-        "Sweeping panoramic camera movement",
-        "Dynamic push-in shot with shallow depth of field"
+        "Medium cinematic B-roll shot",
+        "Sweeping panoramic aerial camera movement",
+        "Golden hour push-in shot with natural depth of field"
     ]
 
     scenes = []
@@ -945,7 +962,7 @@ def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=Fals
             m_loc = re.search(r'^(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)', line, re.IGNORECASE)
 
             if m_cena:
-                visual = clean_visual_for_flow(m_cena.group(1).strip())
+                visual = clean_visual_for_flow(m_cena.group(1).strip(), is_narration=is_narration)
             elif m_pa:
                 speaker_tag = "A"
                 spoken_parts.append(fix_pronunciation(m_pa.group(1).strip(), lang_label))
@@ -1004,17 +1021,18 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     if not pending_indices:
         return scenes
 
+    is_narration = ("Diálogo" not in audio_mode)
     clean_key = api_key.strip() if api_key else ""
     if not clean_key:
         for i in pending_indices:
             hint = scenes[i].get("raw_visual_hint", "").strip()
-            scenes[i]["visual"] = hint if hint else "Cinematic 4K footage illustrating the narrated scene with period-accurate wardrobe, zero text"
+            scenes[i]["visual"] = hint if hint else "Sweeping cinematic 4K aerial B-roll shot of urban avenues and green hills at sunset, zero text"
         return scenes
 
-    if "Diálogo" in audio_mode:
+    if not is_narration:
         subject_rule = f"Two-shot in the authentic setting and era of '{topic_hint or 'the story'}', active speaker talking while listener is silent, period-accurate attire."
     elif char_lock_desc.strip():
-        subject_rule = f"Keep character appearance 100% identical across scenes ({char_lock_desc.strip()}), mouths closed."
+        subject_rule = f"Keep recurring character appearance 100% identical across scenes ({char_lock_desc.strip()}), mouths closed, acting naturally."
     elif "Palito" in style_choice:
         subject_rule = "Feature simple white stick figure characters dressed appropriately for the story era."
     elif "Cartoon" in style_choice:
@@ -1023,7 +1041,12 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
             "and STRICTLY PERIOD-ACCURATE wardrobe matching the story era."
         )
     else:
-        subject_rule = "Cinematic footage matching the exact historical era, real named location (never ocean/beach for inland Minas Gerais cities), and consistent character appearance, mouths closed."
+        subject_rule = (
+            "PURE CINEMATIC DOCUMENTARY B-ROLL ONLY: Show real architecture, tree-lined avenues, highways, university campuses, green hills, or parks matching the exact geography and tropical/subtropical climate! "
+            "ABSOLUTE BANS: NEVER show a TV presenter, news anchor, YouTuber, or person talking to camera; NEVER show thumbs-up gestures or subscribe buttons; "
+            "NEVER show scoreboards, maps, split-screens, or signs with text; NEVER show snow/ice in Brazil; NEVER show ocean/beaches for inland Minas Gerais cities! "
+            "If the narration mentions a score ('1 a 0', 'empate'), a question to viewers, or 'like/subscribe/comment', illustrate it ONLY with a majestic sunset drone shot over the city skyline or landmarks!"
+        )
 
     batch_size = 25
     total_batches = math.ceil(len(pending_indices) / batch_size)
@@ -1032,27 +1055,26 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
         batch_idxs = pending_indices[start:start + batch_size]
         if progress_placeholder is not None:
             progress_placeholder.info(
-                f"🎬 Diretor Visual IA criando cenários sincronizados em inglês (Lote {b_num}/{total_batches})..."
+                f"🎬 Diretor Visual B-Roll criando cenários puros sem apresentadores/placas (Lote {b_num}/{total_batches})..."
             )
 
         lines_in = []
         for idx in batch_idxs:
             sc = scenes[idx]
-            hint_part = f" | Visual Hint: {sc['raw_visual_hint']}" if sc.get("raw_visual_hint") else ""
+            hint_part = f" | Hint: {sc['raw_visual_hint']}" if sc.get("raw_visual_hint") else ""
             lines_in.append(f"{idx + 1}|Narration: {sc['spoken']}{hint_part}")
 
         user_p = (
-            f"Video Overall Topic: '{topic_hint or 'Story / Documentary'}'\n"
-            f"Character & Wardrobe Lock: {subject_rule}\n\n"
+            f"Video Overall Topic: '{topic_hint or 'Documentary / Story'}'\n"
+            f"STRICT VISUAL RULES: {subject_rule}\n\n"
             f"For each numbered item below, write ONE specific 8-second continuous camera shot in ENGLISH (16 to 26 words) "
-            f"that visually illustrates the exact action of that narration line. Keep recurring characters' hair color, hairstyle, and outfit 100% identical. "
-            f"STRICTLY NO on-screen text, NO signs, NO brand names like Pixar/Disney, NO graphic gore, NO modern clothes in ancient stories.\n\n"
+            f"that visually illustrates the real-world subject. NEVER translate YouTube metaphors literally (no presenters, no thumbs-up, no scoreboards, no maps, no snow in Brazil, no text).\n\n"
             f"Format EVERY output line strictly as:\n"
-            f"NUMBER|English visual shot description\n\n"
+            f"NUMBER|English B-roll visual shot description\n\n"
             f"ITEMS:\n" + "\n".join(lines_in)
         )
-        sys_p = "You are an expert AI film director for Google Veo. Output ONLY 'NUMBER|English visual description' lines."
-        out_txt, err = call_llm_text(sys_p, user_p, clean_key, temperature=0.22)
+        sys_p = "You are a world-class Netflix documentary B-roll cinematographer. Output ONLY 'NUMBER|English visual description' lines."
+        out_txt, err = call_llm_text(sys_p, user_p, clean_key, temperature=0.2)
 
         parsed_map = {}
         if not err and out_txt:
@@ -1060,7 +1082,10 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
                 m = re.match(r'^\s*(\d+)\s*\|\s*(.+)$', ln.strip())
                 if m:
                     s_num = int(m.group(1))
-                    vis_en = sanitize_visual_for_veo_safety(re.sub(r'[\r\n"]+', ' ', m.group(2)).strip(" .-"))
+                    vis_en = sanitize_visual_for_veo_safety(
+                        re.sub(r'[\r\n"]+', ' ', m.group(2)).strip(" .-"),
+                        is_narration_broll=is_narration
+                    )
                     if len(vis_en) >= 10:
                         parsed_map[s_num] = vis_en
 
@@ -1069,19 +1094,19 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
                 scenes[idx]["visual"] = parsed_map[idx + 1]
                 scenes[idx]["needs_ai_visual"] = False
             elif not scenes[idx].get("visual"):
-                scenes[idx]["visual"] = f"Cinematic continuous shot illustrating {topic_hint or 'the narrated scene'}, period-accurate setting, zero text"
+                scenes[idx]["visual"] = f"Sweeping cinematic 4K aerial drone shot illustrating {topic_hint or 'the landscape'} in golden hour sunlight, zero text"
 
     if progress_placeholder is not None:
         progress_placeholder.empty()
     return scenes
 # ===================================================================================
 
-# ================= MOTOR LOCAL FFMPEG.WASM v3.2 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
+# ================= MOTOR LOCAL FFMPEG.WASM v3.3 (TRAVA ANTI-DESLIZAMENTO DE ÁUDIO PRÓPRIO + ANTI-CLONE) =================
 FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.2</title>
+<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.3</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';document.head.appendChild(s);"></script>
 <style>
@@ -1119,1898 +1144,16 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="top-row">
     <div>
-      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.2 (Sincronia 1:1 + Anti-Takes Repetidos)</strong>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.3 (Trava Anti-Deslizamento de Sincronia!)</strong>
       <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
-        Elimina takes duplicados, sincroniza sua própria locução e une <b>950 MB+</b> num único <code>.MP4</code>!
+        Mantém sincronia cravada até o último segundo mesmo se o Google Flow falhar em algumas cenas do meio!
         Cenas no roteiro: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <span class="badge">v3.2 Estável</span>
+      <span class="badge">v3.3 Sync-Lock</span>
       <button class="btn-sec" id="open-tab-btn" title="Abre em aba exclusiva com 4GB de RAM dedicados do Chrome">🖥️ Abrir em Aba Dedicada (+RAM)</button>
     </div>
   </div>
 
-  <label class="lbl">📜 Roteiro Completo OU conteúdo de <code>Prompts_Flow.txt</code> (Colar o <code>Prompts_Flow.txt</code> garante 100% as mesmas cenas!):</label>
-  <textarea id="inp-script" class="script-box" rows="4" placeholder="Cole aqui o roteiro completo (ou cole direto o texto de Prompts_Flow.txt com === CENA 001 ===)..."></textarea>
-
-  <div class="grid2">
-    <div>
-      <label class="lbl">📦 1. Selecione o .ZIP gigante (0.9GB+) ou vários .MP4:</label>
-      <div class="dropzone" onclick="document.getElementById('inp-videos').click()">
-        <input type="file" id="inp-videos" multiple accept=".zip,.mp4,video/mp4,application/zip" style="display:none" />
-        <div id="vid-file-label" style="font-size:13px;color:#93c5fd;font-weight:600;">
-          Clique aqui para escolher o .ZIP ou todos os .MP4<br/>
-          <span style="font-size:11px;color:#64748b;font-weight:400;">Leitura direta no seu PC (0 bytes enviados p/ internet)</span>
-        </div>
-      </div>
-
-      <div class="grid2" style="margin-top:10px;">
-        <div>
-          <label class="lbl">🎙️ 2A. Seu Áudio / Locução Principal (Opcional):</label>
-          <input type="file" id="inp-voice" accept="audio/*" style="font-size:11.5px;width:100%;color:#cbd5e1;" />
-        </div>
-        <div>
-          <label class="lbl">🎵 2B. Música de Fundo (Opcional):</label>
-          <input type="file" id="inp-bgm" accept="audio/*" style="font-size:11.5px;width:100%;color:#cbd5e1;" />
-        </div>
-      </div>
-      <div id="bgm-vol-wrap" style="margin-top:8px;display:none;">
-        <label class="lbl">🔉 Volume da Música de Fundo: <span id="bgm-vol-val">12</span>%</label>
-        <input type="range" id="inp-bgm-vol" min="3" max="40" value="12" oninput="document.getElementById('bgm-vol-val').innerText=this.value" />
-      </div>
-    </div>
-
-    <div>
-      <label class="lbl">🧭 3. Como ordenar e filtrar os clipes no navegador?</label>
-      <select id="sel-sort">
-        <option value="whisper">🗣️ Pareamento IA por Voz v3.2 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
-        <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome (Para vídeos gerados mudos)</option>
-        <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes</option>
-      </select>
-
-      <label class="chk-row" style="margin-top:10px;">
-        <input type="checkbox" id="chk-drop-muted" checked />
-        <span>🧹 Descartar automaticamente clipes mudos e <b>takes duplicados da mesma fala</b></span>
-      </label>
-
-      <label class="chk-row">
-        <input type="checkbox" id="chk-single-file" checked />
-        <span>🎬 Entregar em <b>1 Único Arquivo .MP4 Completo</b> (Mesmo com 850 MB a 1.2 GB!)</span>
-      </label>
-
-      <div style="font-size:11.5px;color:#94a3b8;background:#0f172a;padding:8px 10px;border-radius:8px;border:1px solid #334155;margin-top:8px;">
-        🎧 <b>Vai usar seu próprio áudio em 2A?</b> Gere os clipes com voz guia no Flow para o Whisper alinhar a ordem exata e suba seu <code>.MP3</code> no campo <b>2A</b> — ele substitui a voz sincronizando tudo!
-      </div>
-    </div>
-  </div>
-
-  <div style="margin-top:14px;">
-    <button class="btn-main" id="btn-run">🚀 MONTAR VÍDEO LIMPO SEM REPETIÇÕES (1 ARQUIVO ÚNICO .MP4)</button>
-  </div>
-
-  <div class="prog-wrap" id="prog-wrap"><div class="prog-bar" id="prog-bar"></div></div>
-  <div class="status-txt" id="status-txt"></div>
-
-  <div class="dl-box" id="dl-box">
-    <div id="dl-summary" style="font-weight:700;color:#6ee7b7;font-size:14px;"></div>
-    <div id="dl-missing" style="font-size:12px;color:#fde68a;margin-top:4px;"></div>
-    <div id="dl-buttons-container" class="dl-grid"></div>
-    <video id="preview-vid" controls style="width:100%;max-height:300px;margin-top:12px;border-radius:8px;background:#000;display:none;"></video>
-  </div>
-
-  <div class="log-box" id="log-box"></div>
-</div>
-
-<script>
-const CONFIG = __CONFIG_JSON__;
-const scriptTextarea = document.getElementById("inp-script");
-scriptTextarea.value = CONFIG.rawScript || "";
-const yieldUI = () => new Promise(r => setTimeout(r, 15));
-
-function fixPronJS(t) {
-  if (!t) return "";
-  let s = t.trim();
-  if (CONFIG.whisperLang === "pt") {
-    s = s.replace(/\bIBGE\b/g, "I B G E")
-         .replace(/\bUFJF\b/g, "U F J F")
-         .replace(/\bUFU\b/g, "U F U")
-         .replace(/\bUFMG\b/g, "U F M G")
-         .replace(/\bIDH\b/g, "I D H")
-         .replace(/\bPIB\b/g, "P I B")
-         .replace(/\bBH\b/g, "Belo Horizonte")
-         .replace(/\bJF\b/g, "Juiz de Fora")
-         .replace(/\bMG\b/g, "Minas Gerais")
-         .replace(/\bBR[-\s]*040\b/gi, "B R zero quarenta")
-         .replace(/R\$\s*(\d+)/g, "$1 reais")
-         .replace(/(\d+)\s*km\b/gi, "$1 quilômetros")
-         .replace(/(\d+)\s*%/g, "$1 por cento")
-         .replace(/\bGoliath\b/g, "Golias")
-         .replace(/\bDavid\b/g, "Davi");
-  }
-  return s.replace(/\s+/g, " ").trim();
-}
-
-function splitSpoken8sJS(spokenText, maxWords = 18) {
-  const wordsTotal = spokenText.split(/\s+/).filter(Boolean);
-  if (wordsTotal.length <= maxWords + 2) return [spokenText.trim()];
-  const sentences = spokenText.trim().split(/(?<=[.!?])\s+/);
-  const rawChunks = [];
-  for (let sent of sentences) {
-    sent = sent.trim();
-    if (!sent) continue;
-    if (sent.split(/\s+/).length <= maxWords) {
-      rawChunks.push(sent);
-    } else {
-      const clauses = sent.split(/(?<=[;:—,])\s+|\s+(?=—)/);
-      let curr = "";
-      for (let cl of clauses) {
-        cl = cl.trim();
-        if (!cl) continue;
-        const cand = curr ? `${curr} ${cl}`.trim() : cl;
-        if (cand.split(/\s+/).length <= maxWords) {
-          curr = cand;
-        } else {
-          if (curr) rawChunks.push(curr);
-          const cw = cl.split(/\s+/);
-          if (cw.length <= maxWords + 2) {
-            curr = cl;
-          } else {
-            const step = Math.max(12, Math.min(maxWords, Math.ceil(cw.length / Math.ceil(cw.length / maxWords))));
-            for (let i = 0; i < cw.length; i += step) {
-              const part = cw.slice(i, i + step).join(" ");
-              if (i + step < cw.length) rawChunks.push(part);
-              else curr = part;
-            }
-          }
-        }
-      }
-      if (curr) rawChunks.push(curr);
-    }
-  }
-  const merged = [];
-  for (const ch of rawChunks) {
-    const cwLen = ch.split(/\s+/).length;
-    const prevLen = merged.length ? merged[merged.length - 1].split(/\s+/).length : 99;
-    if (merged.length && (cwLen < 8 || prevLen < 9) && (prevLen + cwLen <= 22)) {
-      merged[merged.length - 1] = `${merged[merged.length - 1]} ${ch}`.trim();
-    } else {
-      merged.push(ch);
-    }
-  }
-  return merged;
-}
-
-function parseScriptScenesJS(raw) {
-  if (!raw || !raw.trim()) return [];
-  if (/===\s*CENA\s*\d+\s*===/i.test(raw)) {
-    const parts = raw.split(/===\s*CENA\s*\d+\s*===/i).map(s => s.trim()).filter(Boolean);
-    const direct = [];
-    for (const p of parts) {
-      const matches = [...p.matchAll(/"([^"]{3,})"/g)];
-      if (matches.length > 0) {
-        direct.push({ spoken: fixPronJS(matches[matches.length - 1][1]) });
-      }
-    }
-    if (direct.length > 0) return direct;
-  }
-
-  let pre = raw.trim();
-  pre = pre.replace(/(?<!^)\n*(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])/g, "\n\n$1");
-  pre = pre.replace(/(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])\s*\n+\s*/g, "$1\n");
-  pre = pre.replace(/(\[(?:CENA|SCENE)\s*:[^\]]*\])\s*\n+\s*(?=(?:LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala|PERSONAGEM))/gi, "$1\n");
-
-  const blocks = pre.trim().split(/\n\s*\n/);
-  const outScenes = [];
-  for (const block of blocks) {
-    const lines = block.split(/\r?\n/).map(l => l.trim()).filter(Boolean);
-    const spokenParts = [];
-    for (const line of lines) {
-      if (/^\[?\d{1,2}:\d{2}(?:\s*-\s*\d{1,2}:\d{2})?\]?$/.test(line)) continue;
-      if (/^(?:ROUND\s*\d+|ABERTURA|VEREDITO\s+FINAL|ENCERRAMENTO|INTRODU[ÇC][ÃA]O|CAP[ÍI]TULO\s*\d+|PARTE\s*\d+)\b/i.test(line) && !line.includes(":")) continue;
-      if (/^\[?(?:CENA|SCENE)\s*:\s*(.+?)\]?$/i.test(line)) continue;
-      const mSpk = line.match(/^(?:PERSONAGEM\s*(?:A|B|1|2)|LOCU[ÇC][ÃA]O|LOCUCION|NARRATION|Narrador|Fala)\s*(?:\(.*?\))?\s*:\s*(.+)/i);
-      if (mSpk) spokenParts.push(fixPronJS(mSpk[1]));
-      else spokenParts.push(fixPronJS(line));
-    }
-    const fullSpoken = spokenParts.filter(Boolean).join(" ").trim();
-    if (!fullSpoken) continue;
-    if (CONFIG.preserve1to1) {
-      outScenes.push({ spoken: fullSpoken });
-    } else {
-      const chunks = splitSpoken8sJS(fullSpoken, 18);
-      for (const ch of chunks) {
-        if (ch) outScenes.push({ spoken: ch });
-      }
-    }
-  }
-  return outScenes;
-}
-
-function getActiveScenes() {
-  const edited = scriptTextarea.value.trim();
-  if (!edited) return [];
-  if (edited === (CONFIG.rawScript || "").trim() && CONFIG.scenes && CONFIG.scenes.length) {
-    return CONFIG.scenes;
-  }
-  return parseScriptScenesJS(edited);
-}
-
-function refreshSceneBadge() {
-  const scs = getActiveScenes();
-  document.getElementById("sc-count-lbl").innerText = scs.length + " cenas";
-}
-refreshSceneBadge();
-scriptTextarea.addEventListener("input", refreshSceneBadge);
-
-document.getElementById("inp-bgm").addEventListener("change", (e) => {
-  document.getElementById("bgm-vol-wrap").style.display = e.target.files.length ? "block" : "none";
-});
-
-document.getElementById("inp-videos").addEventListener("change", (e) => {
-  const files = [...e.target.files];
-  if (!files.length) return;
-  const totalMB = (files.reduce((acc, f) => acc + f.size, 0) / (1024 * 1024)).toFixed(1);
-  document.getElementById("vid-file-label").innerHTML =
-    `✅ <b>${files.length} arquivo(s) selecionado(s) (${totalMB} MB totais)</b><br/><span style="font-size:11px;color:#34d399;">Pronto para colar sem upload!</span>`;
-});
-
-document.getElementById("open-tab-btn").addEventListener("click", () => {
-  scriptTextarea.textContent = scriptTextarea.value;
-  const htmlFull = document.documentElement.outerHTML;
-  const blob = new Blob([htmlFull], { type: "text/html;charset=utf-8" });
-  const url = URL.createObjectURL(blob);
-  window.open(url, "_blank");
-});
-
-function logMsg(msg) {
-  const lb = document.getElementById("log-box");
-  lb.style.display = "block";
-  const div = document.createElement("div");
-  div.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`;
-  lb.appendChild(div);
-  lb.scrollTop = lb.scrollHeight;
-}
-
-function setProgress(pct, text) {
-  document.getElementById("prog-wrap").style.display = "block";
-  document.getElementById("prog-bar").style.width = Math.min(100, Math.max(0, pct)) + "%";
-  document.getElementById("status-txt").innerText = text;
-}
-
-function normalizeText(str) {
-  if (!str) return "";
-  return str.toLowerCase()
-    .normalize("NFD").replace(/[\u0300-\u036f]/g, "")
-    .replace(/[^a-z0-9\s]/g, " ")
-    .replace(/\s+/g, " ").trim();
-}
-
-function levenshteinRatio(a, b) {
-  if (!a && !b) return 100;
-  if (!a || !b) return 0;
-  const m = a.length, n = b.length;
-  const dp = new Uint16Array(n + 1);
-  for (let j = 0; j <= n; j++) dp[j] = j;
-  for (let i = 1; i <= m; i++) {
-    let prev = dp[0];
-    dp[0] = i;
-    for (let j = 1; j <= n; j++) {
-      const temp = dp[j];
-      const cost = a[i - 1] === b[j - 1] ? 0 : 1;
-      dp[j] = Math.min(dp[j] + 1, dp[j - 1] + 1, prev + cost);
-      prev = temp;
-    }
-  }
-  return ((m + n - dp[n]) / (m + n)) * 100;
-}
-
-function tokenSortRatio(a, b) {
-  const sa = a.split(" ").filter(Boolean).sort().join(" ");
-  const sb = b.split(" ").filter(Boolean).sort().join(" ");
-  return levenshteinRatio(sa, sb);
-}
-
-function encodeMonoWav12k(int16Samples, sampleRate) {
-  const buffer = new ArrayBuffer(44 + int16Samples.length * 2);
-  const view = new DataView(buffer);
-  const writeStr = (off, s) => { for (let i = 0; i < s.length; i++) view.setUint8(off + i, s.charCodeAt(i)); };
-  writeStr(0, "RIFF");
-  view.setUint32(4, 36 + int16Samples.length * 2, true);
-  writeStr(8, "WAVE");
-  writeStr(12, "fmt ");
-  view.setUint32(16, 16, true);
-  view.setUint16(20, 1, true);
-  view.setUint16(22, 1, true);
-  view.setUint32(24, sampleRate, true);
-  view.setUint32(28, sampleRate * 2, true);
-  view.setUint16(32, 2, true);
-  view.setUint16(34, 16, true);
-  writeStr(36, "data");
-  view.setUint32(40, int16Samples.length * 2, true);
-  let offset = 44;
-  for (let i = 0; i < int16Samples.length; i++, offset += 2) {
-    view.setInt16(offset, int16Samples[i], true);
-  }
-  return new Blob([buffer], { type: "audio/wav" });
-}
-
-function formatSrtTime(secFloat) {
-  const ms = Math.round((secFloat - Math.floor(secFloat)) * 1000);
-  const sInt = Math.floor(secFloat);
-  const hrs = Math.floor(sInt / 3600);
-  const mins = Math.floor((sInt % 3600) / 60);
-  const secs = sInt % 60;
-  return `${String(hrs).padStart(2, "0")}:${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")},${String(ms).padStart(3, "0")}`;
-}
-
-function buildSrt(orderedItems, scenes) {
-  let curr = 0.0, idx = 1;
-  const blocks = [];
-  for (let i = 0; i < orderedItems.length; i++) {
-    const it = orderedItems[i];
-    const dur = it.duration > 0.5 ? it.duration : 8.0;
-    let txt = "";
-    if (it.matchedSceneIdx !== null && scenes[it.matchedSceneIdx] && scenes[it.matchedSceneIdx].spoken) {
-      txt = scenes[it.matchedSceneIdx].spoken;
-    } else if (it.transcript && !it.transcript.startsWith("(")) {
-      txt = it.transcript;
-    } else if (i < scenes.length && scenes[i].spoken) {
-      txt = scenes[i].spoken;
-    }
-    if (txt) {
-      const words = txt.split(/\s+/);
-      if (words.length > 9) {
-        const mid = Math.floor(words.length / 2);
-        const p1 = words.slice(0, mid).join(" ");
-        const p2 = words.slice(mid).join(" ");
-        const half = dur / 2.0;
-        blocks.push(`${idx++}\n${formatSrtTime(curr)} --> ${formatSrtTime(curr + half - 0.08)}\n${p1}\n`);
-        blocks.push(`${idx++}\n${formatSrtTime(curr + half)} --> ${formatSrtTime(curr + dur - 0.12)}\n${p2}\n`);
-      } else {
-        blocks.push(`${idx++}\n${formatSrtTime(curr)} --> ${formatSrtTime(curr + dur - 0.12)}\n${txt}\n`);
-      }
-    }
-    curr += dur;
-  }
-  return blocks.join("\n");
-}
-
-function assignClipsExclusivelyJS(clips, scenes, endKeywords, dropUnmatched) {
-  const numScenes = scenes.length;
-  if (!numScenes) {
-    const kept = clips.filter(c => !dropUnmatched || !c.isMuted);
-    kept.sort((a, b) => a.dateMs - b.dateMs || a.name.localeCompare(b.name, undefined, { numeric: true }));
-    kept.forEach((c) => { c.matchedSceneIdx = null; c.score = 100; });
-    return { kept, discardedCount: clips.length - kept.length, duplicateTakesRemoved: 0, missingScenes: [] };
-  }
-
-  const sceneNorms = scenes.map(s => normalizeText(s.spoken || ""));
-  const wordFreq = {};
-  const sceneWordSets = sceneNorms.map(sn => {
-    const ws = new Set(sn.split(" ").filter(w => w.length >= 4));
-    ws.forEach(w => { wordFreq[w] = (wordFreq[w] || 0) + 1; });
-    return ws;
-  });
-
-  const bestScorePerClip = new Float32Array(clips.length);
-  const bestScenePerClip = new Int32Array(clips.length).fill(-1);
-  const pairs = [];
-
-  clips.forEach((clip, cIdx) => {
-    clip.tNorm = normalizeText(clip.transcript || "");
-    if (clip.isMuted || !clip.tNorm || clip.tNorm.length < 5) return;
-
-    const tWords = new Set(clip.tNorm.split(" ").filter(w => w.length >= 4));
-    const hasEndKw = endKeywords.some(kw => clip.tNorm.includes(kw));
-
-    let maxSc = 0;
-    let maxIdx = -1;
-
-    sceneNorms.forEach((sNorm, sIdx) => {
-      if (!sNorm) return;
-      const rFull = levenshteinRatio(clip.tNorm, sNorm);
-      const rSort = tokenSortRatio(clip.tNorm, sNorm);
-      let score = (rFull * 0.62) + (rSort * 0.38);
-
-      let rareBonus = 0;
-      tWords.forEach(w => {
-        if (sceneWordSets[sIdx].has(w)) {
-          if (wordFreq[w] === 1) rareBonus += 8.5;
-          else if (wordFreq[w] === 2) rareBonus += 3.5;
-        }
-      });
-      score = Math.min(100, score + Math.min(22, rareBonus));
-
-      if (hasEndKw && sIdx === numScenes - 1) score = Math.min(100, score + 18);
-      else if (hasEndKw && sIdx < numScenes - 2) score -= 25;
-
-      if (score > maxSc) {
-        maxSc = score;
-        maxIdx = sIdx;
-      }
-      pairs.push({ score, cIdx, sIdx });
-    });
-
-    bestScorePerClip[cIdx] = maxSc;
-    bestScenePerClip[cIdx] = maxIdx;
-  });
-
-  pairs.sort((a, b) => b.score - a.score);
-  const assigned = new Map();
-  const usedScenes = new Set();
-  const acceptedClipsList = [];
-  let duplicateTakesRemoved = 0;
-
-  for (const p of pairs) {
-    if (p.score < 50.0) break;
-    if (assigned.has(p.cIdx) || usedScenes.has(p.sIdx)) continue;
-
-    if (p.sIdx !== bestScenePerClip[p.cIdx] && p.score < (bestScorePerClip[p.cIdx] - 7.5)) {
-      continue;
-    }
-
-    const candNorm = clips[p.cIdx].tNorm;
-    let isCloneOfAccepted = false;
-    for (const prev of acceptedClipsList) {
-      const clipSim = Math.max(
-        levenshteinRatio(candNorm, prev.tNorm),
-        tokenSortRatio(candNorm, prev.tNorm)
-      );
-      if (clipSim >= 70.0) {
-        const scriptSim = levenshteinRatio(sceneNorms[p.sIdx], sceneNorms[prev.sIdx]);
-        if (scriptSim < 75.0) {
-          isCloneOfAccepted = true;
-          break;
-        }
-      }
-    }
-    if (isCloneOfAccepted) {
-      duplicateTakesRemoved++;
-      continue;
-    }
-
-    assigned.set(p.cIdx, p);
-    usedScenes.add(p.sIdx);
-    acceptedClipsList.push({ cIdx: p.cIdx, sIdx: p.sIdx, tNorm: candNorm });
-  }
-
-  const kept = [];
-  let discardedCount = 0;
-  clips.forEach((clip, cIdx) => {
-    if (assigned.has(cIdx)) {
-      const m = assigned.get(cIdx);
-      clip.position = m.sIdx;
-      clip.matchedSceneIdx = m.sIdx;
-      clip.score = Math.round(m.score * 10) / 10;
-      kept.push(clip);
-    } else if (!dropUnmatched && !clip.isMuted) {
-      clip.position = 99999 + cIdx;
-      clip.matchedSceneIdx = null;
-      clip.score = 0;
-      kept.push(clip);
-    } else {
-      discardedCount++;
-      if (!clip.isMuted && bestScorePerClip[cIdx] >= 55.0) {
-        duplicateTakesRemoved++;
-      }
-    }
-  });
-
-  kept.sort((a, b) => a.position - b.position || a.name.localeCompare(b.name, undefined, { numeric: true }));
-  const missingScenes = [];
-  for (let i = 0; i < numScenes; i++) {
-    if (!usedScenes.has(i)) missingScenes.push(i + 1);
-  }
-  return { kept, discardedCount, duplicateTakesRemoved, missingScenes };
-}
-
-let CACHED_CORE_BLOB_URL = null;
-let CACHED_WASM_BLOB_URL = null;
-
-async function fetchAsBlobUrl(url, mimeType) {
-  const resp = await fetch(url);
-  if (!resp.ok) throw new Error(`HTTP ${resp.status} ao baixar ${url}`);
-  const buf = await resp.arrayBuffer();
-  return URL.createObjectURL(new Blob([buf], { type: mimeType }));
-}
-
-async function createFreshFFmpegSingleThread() {
-  if (!window.FFmpeg || !window.FFmpeg.createFFmpeg) {
-    throw new Error("Biblioteca FFmpeg não carregou da CDN. Recarregue a página.");
-  }
-  if (!CACHED_CORE_BLOB_URL || !CACHED_WASM_BLOB_URL) {
-    const cdns = [
-      "https://cdn.jsdelivr.net/npm/@ffmpeg/core-st@0.11.1/dist",
-      "https://unpkg.com/@ffmpeg/core-st@0.11.1/dist"
-    ];
-    let lastErr = "Falha ao baixar núcleo WASM";
-    for (const base of cdns) {
-      try {
-        logMsg(`Baixando motor FFmpeg Single-Thread (${base.includes("jsdelivr") ? "jsDelivr" : "unpkg"})...`);
-        CACHED_CORE_BLOB_URL = await fetchAsBlobUrl(`${base}/ffmpeg-core.js`, "text/javascript");
-        CACHED_WASM_BLOB_URL = await fetchAsBlobUrl(`${base}/ffmpeg-core.wasm`, "application/wasm");
-        break;
-      } catch (e) {
-        lastErr = (e && (e.message || String(e))) || "Erro de rede";
-      }
-    }
-    if (!CACHED_CORE_BLOB_URL || !CACHED_WASM_BLOB_URL) throw new Error(lastErr);
-  }
-
-  const ffmpeg = window.FFmpeg.createFFmpeg({
-    mainName: "main",
-    corePath: CACHED_CORE_BLOB_URL,
-    wasmPath: CACHED_WASM_BLOB_URL,
-    workerPath: CACHED_CORE_BLOB_URL,
-    log: false
-  });
-  await ffmpeg.load();
-  return ffmpeg;
-}
-
-async function runFFmpegSafe(ffInstance, argsArray) {
-  try {
-    await ffInstance.run(...argsArray);
-  } catch (err) {
-    const msg = String((err && (err.message || err)) || "");
-    if (msg.includes("exit(0)") || (err && err.status === 0)) {
-      return;
-    }
-    throw err;
-  }
-}
-
-function safeCloseFFmpeg(ffInstance) {
-  if (!ffInstance) return;
-  try { ffInstance.exit(); } catch (e) {}
-}
-
-async function joinScenesIntoSingleMp4(clipsSlice, voiceFile, bgmFile, bgmVol, progStart, progSpan, labelPrefix) {
-  const batchSize = 18;
-  const numBatches = Math.ceil(clipsSlice.length / batchSize);
-  const tsChunks = [];
-  let totalTsBytes = 0;
-
-  for (let b = 0; b < numBatches; b++) {
-    const sub = clipsSlice.slice(b * batchSize, (b + 1) * batchSize);
-    const pct = progStart + ((b + 1) / numBatches) * (progSpan * 0.72);
-    setProgress(pct, `⚡ ${labelPrefix}Colando lote rápido ${b + 1}/${numBatches} (${sub.length} cenas — Zero recodificação)...`);
-    await yieldUI();
-
-    let ffBatch = await createFreshFFmpegSingleThread();
-    try {
-      const concatLines = [];
-      for (let k = 0; k < sub.length; k++) {
-        const fn = `in_${k}.mp4`;
-        ffBatch.FS("writeFile", fn, await sub[k].getUint8());
-        concatLines.push(`file '${fn}'`);
-      }
-      ffBatch.FS("writeFile", "list.txt", new TextEncoder().encode(concatLines.join("\n")));
-
-      await runFFmpegSafe(ffBatch, [
-        "-f", "concat", "-safe", "0", "-i", "list.txt",
-        "-c", "copy", "-bsf:v", "h264_mp4toannexb", "-f", "mpegts", "batch.ts"
-      ]);
-
-      const tsData = ffBatch.FS("readFile", "batch.ts");
-      const tsCopy = tsData.slice();
-      tsChunks.push(tsCopy);
-      totalTsBytes += tsCopy.byteLength;
-
-      for (let k = 0; k < sub.length; k++) {
-        try { ffBatch.FS("unlink", `in_${k}.mp4`); } catch (e) {}
-      }
-      try { ffBatch.FS("unlink", "list.txt"); ffBatch.FS("unlink", "batch.ts"); } catch (e) {}
-    } finally {
-      safeCloseFFmpeg(ffBatch);
-      ffBatch = null;
-    }
-  }
-
-  setProgress(progStart + progSpan * 0.80, `🔗 ${labelPrefix}Montando arquivo .MP4 único contínuo (${(totalTsBytes / 1048576).toFixed(0)} MB)...`);
-  await yieldUI();
-
-  let mergedTs = new Uint8Array(totalTsBytes);
-  let offset = 0;
-  for (let i = 0; i < tsChunks.length; i++) {
-    mergedTs.set(tsChunks[i], offset);
-    offset += tsChunks[i].byteLength;
-    tsChunks[i] = null;
-  }
-
-  let ffMux = await createFreshFFmpegSingleThread();
-  let finalBytes = null;
-  try {
-    ffMux.FS("writeFile", "all.ts", mergedTs);
-    mergedTs = null;
-
-    const muxArgs = totalTsBytes > 300 * 1048576
-      ? ["-i", "all.ts", "-c", "copy", "-bsf:a", "aac_adtstoasc", "joined.mp4"]
-      : ["-i", "all.ts", "-c", "copy", "-bsf:a", "aac_adtstoasc", "-movflags", "+faststart", "joined.mp4"];
-
-    await runFFmpegSafe(ffMux, muxArgs);
-    try { ffMux.FS("unlink", "all.ts"); } catch (e) {}
-
-    if (!voiceFile && !bgmFile) {
-      const directBlob = new Blob([ffMux.FS("readFile", "joined.mp4")], { type: "video/mp4" });
-      try { ffMux.FS("unlink", "joined.mp4"); } catch (e) {}
-      return directBlob;
-    }
-
-    finalBytes = ffMux.FS("readFile", "joined.mp4").slice();
-    try { ffMux.FS("unlink", "joined.mp4"); } catch (e) {}
-  } finally {
-    safeCloseFFmpeg(ffMux);
-    ffMux = null;
-  }
-
-  if (voiceFile) {
-    setProgress(progStart + progSpan * 0.90, `🎙️ ${labelPrefix}Sincronizando sua locução principal...`);
-    await yieldUI();
-    let ffVoice = await createFreshFFmpegSingleThread();
-    try {
-      const vExt = voiceFile.name.split(".").pop() || "mp3";
-      const vIn = `v.${vExt}`;
-      ffVoice.FS("writeFile", "base.mp4", finalBytes);
-      finalBytes = null;
-      ffVoice.FS("writeFile", vIn, new Uint8Array(await voiceFile.arrayBuffer()));
-      await runFFmpegSafe(ffVoice, [
-        "-i", "base.mp4", "-i", vIn, "-map", "0:v:0", "-map", "1:a:0",
-        "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "-shortest", "voiced.mp4"
-      ]);
-      try { ffVoice.FS("unlink", "base.mp4"); ffVoice.FS("unlink", vIn); } catch (e) {}
-      if (!bgmFile) {
-        const vBlob = new Blob([ffVoice.FS("readFile", "voiced.mp4")], { type: "video/mp4" });
-        try { ffVoice.FS("unlink", "voiced.mp4"); } catch (e) {}
-        return vBlob;
-      }
-      finalBytes = ffVoice.FS("readFile", "voiced.mp4").slice();
-      try { ffVoice.FS("unlink", "voiced.mp4"); } catch (e) {}
-    } finally {
-      safeCloseFFmpeg(ffVoice);
-      ffVoice = null;
-    }
-  }
-
-  if (bgmFile) {
-    setProgress(progStart + progSpan * 0.95, `🎵 ${labelPrefix}Mixando música de fundo...`);
-    await yieldUI();
-    let ffBgm = await createFreshFFmpegSingleThread();
-    try {
-      const bExt = bgmFile.name.split(".").pop() || "mp3";
-      const bIn = `b.${bExt}`;
-      ffBgm.FS("writeFile", "base.mp4", finalBytes);
-      finalBytes = null;
-      ffBgm.FS("writeFile", bIn, new Uint8Array(await bgmFile.arrayBuffer()));
-      await runFFmpegSafe(ffBgm, [
-        "-i", "base.mp4", "-stream_loop", "-1", "-i", bIn,
-        "-filter_complex", `[1:a]volume=${bgmVol.toFixed(3)}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]`,
-        "-map", "0:v:0", "-map", "[aout]", "-c:v", "copy", "-c:a", "aac", "-b:a", "160k", "bgm_out.mp4"
-      ]);
-      try { ffBgm.FS("unlink", "base.mp4"); ffBgm.FS("unlink", bIn); } catch (e) {}
-      const bBlob = new Blob([ffBgm.FS("readFile", "bgm_out.mp4")], { type: "video/mp4" });
-      try { ffBgm.FS("unlink", "bgm_out.mp4"); } catch (e) {}
-      return bBlob;
-    } finally {
-      safeCloseFFmpeg(ffBgm);
-      ffBgm = null;
-    }
-  }
-
-  return new Blob([finalBytes], { type: "video/mp4" });
-}
-
-async function transcribeBatchGroq(wavBlob, apiKey, langCode) {
-  const sleep = ms => new Promise(r => setTimeout(r, ms));
-  for (let attempt = 0; attempt < 5; attempt++) {
-    const fd = new FormData();
-    fd.append("file", wavBlob, "batch.wav");
-    fd.append("model", "whisper-large-v3-turbo");
-    fd.append("language", langCode);
-    fd.append("response_format", "verbose_json");
-    fd.append("timestamp_granularities[]", "word");
-    fd.append("timestamp_granularities[]", "segment");
-
-    const resp = await fetch("https://api.groq.com/openai/v1/audio/transcriptions", {
-      method: "POST",
-      headers: { "Authorization": `Bearer ${apiKey}` },
-      body: fd
-    });
-    if (resp.status === 200) return await resp.json();
-    if (resp.status === 429) {
-      logMsg("⏳ Pausa rápida de 6s para respeitar limite gratuito da API Whisper...");
-      await sleep(6000);
-      continue;
-    }
-    const errTxt = await resp.text();
-    throw new Error(`Whisper HTTP ${resp.status}: ${errTxt.slice(0, 120)}`);
-  }
-  throw new Error("Limite temporário atingido na API Whisper.");
-}
-
-document.getElementById("btn-run").addEventListener("click", async () => {
-  const rawFiles = [...document.getElementById("inp-videos").files];
-  if (!rawFiles.length) {
-    alert("⚠️ Selecione primeiro o arquivo .ZIP ou os vídeos .MP4!");
-    return;
-  }
-
-  const activeScenes = getActiveScenes();
-  const sortMode = document.getElementById("sel-sort").value;
-  const dropMuted = document.getElementById("chk-drop-muted").checked;
-  const preferSingleFile = document.getElementById("chk-single-file").checked;
-  const voiceFile = document.getElementById("inp-voice").files[0] || null;
-  const bgmFile = document.getElementById("inp-bgm").files[0] || null;
-  const bgmVol = parseInt(document.getElementById("inp-bgm-vol").value || "12", 10) / 100.0;
-
-  const btn = document.getElementById("btn-run");
-  btn.disabled = true;
-  document.getElementById("dl-box").style.display = "none";
-  document.getElementById("log-box").innerHTML = "";
-
-  try {
-    setProgress(3, "📂 Lendo pacote de vídeos localmente na memória do seu computador...");
-    await yieldUI();
-    const clipEntries = [];
-
-    for (const f of rawFiles) {
-      if (f.name.toLowerCase().endsWith(".zip")) {
-        logMsg(`Abrindo pacote local ${f.name} (${(f.size / 1048576).toFixed(1)} MB)...`);
-        const zip = await JSZip.loadAsync(f);
-        const names = Object.keys(zip.files);
-        for (const path of names) {
-          const zObj = zip.files[path];
-          if (!zObj.dir && path.toLowerCase().endsWith(".mp4") && !path.startsWith("__MACOSX")) {
-            const baseName = path.split("/").pop();
-            if (baseName && !baseName.startsWith("._")) {
-              clipEntries.push({
-                name: baseName,
-                dateMs: zObj.date ? zObj.date.getTime() : 0,
-                getUint8: async () => await zObj.async("uint8array"),
-                sizeHint: zObj._data && zObj._data.uncompressedSize ? zObj._data.uncompressedSize : 0
-              });
-            }
-          }
-        }
-      } else if (f.name.toLowerCase().endsWith(".mp4")) {
-        clipEntries.push({
-          name: f.name,
-          dateMs: f.lastModified || 0,
-          getUint8: async () => new Uint8Array(await f.arrayBuffer()),
-          sizeHint: f.size
-        });
-      }
-    }
-
-    if (!clipEntries.length) throw new Error("Nenhum vídeo .MP4 válido encontrado!");
-    logMsg(`✅ ${clipEntries.length} clipes .MP4 localizados localmente!`);
-
-    const needAudioCheck = (dropMuted && sortMode !== "alpha") || (sortMode === "whisper");
-    const sampleRateTarget = 12000;
-    const slotSeconds = 11;
-    const pcm12kPerClip = new Array(clipEntries.length).fill(null);
-
-    if (needAudioCheck) {
-      const AudioCtx = window.AudioContext || window.webkitAudioContext;
-      const actx = new AudioCtx();
-      try {
-        for (let i = 0; i < clipEntries.length; i++) {
-          setProgress(5 + ((i + 1) / clipEntries.length) * 26, `🎧 Analisando áudio local do clipe ${i + 1}/${clipEntries.length} (${clipEntries[i].name})...`);
-          const bytes = await clipEntries[i].getUint8();
-          clipEntries[i].byteLength = bytes.byteLength;
-          try {
-            const abuf = await actx.decodeAudioData(bytes.buffer.slice(bytes.byteOffset, bytes.byteOffset + bytes.byteLength));
-            clipEntries[i].duration = abuf.duration || 8.0;
-            const ch0 = abuf.getChannelData(0);
-            let sumSq = 0, countRms = 0;
-            const stepRms = Math.max(1, Math.floor(ch0.length / 8000));
-            for (let k = 0; k < ch0.length; k += stepRms) { sumSq += ch0[k] * ch0[k]; countRms++; }
-            clipEntries[i].isMuted = (Math.sqrt(sumSq / Math.max(1, countRms)) < 0.0045);
-
-            if (!clipEntries[i].isMuted && sortMode === "whisper") {
-              const ratio = abuf.sampleRate / sampleRateTarget;
-              const maxSamples = Math.min(Math.floor(ch0.length / ratio), Math.floor(sampleRateTarget * 8.4));
-              const down = new Int16Array(maxSamples);
-              for (let s = 0; s < maxSamples; s++) {
-                const v = Math.max(-1, Math.min(1, ch0[Math.floor(s * ratio)]));
-                down[s] = v < 0 ? v * 0x8000 : v * 0x7FFF;
-              }
-              pcm12kPerClip[i] = down;
-            }
-          } catch (decErr) {
-            clipEntries[i].duration = 8.0;
-            clipEntries[i].isMuted = true;
-          }
-        }
-      } finally {
-        try { await actx.close(); } catch (e) {}
-      }
-    } else {
-      clipEntries.forEach(c => { c.duration = 8.0; c.isMuted = false; });
-    }
-
-    let orderedClips = [];
-    let discardedCount = 0;
-    let missingScenes = [];
-
-    const canUseWhisper = (sortMode === "whisper") && CONFIG.groqKey && CONFIG.groqKey.startsWith("gsk_") && activeScenes.length > 0;
-
-    if (canUseWhisper) {
-      const speakableIndices = [];
-      clipEntries.forEach((c, idx) => { if (!c.isMuted && pcm12kPerClip[idx]) speakableIndices.push(idx); });
-      logMsg(`🗣️ Transcrevendo ${speakableIndices.length} clipes falados com barreira anti-vazamento...`);
-
-      const batchSize = 7;
-      const totalBatches = Math.ceil(speakableIndices.length / batchSize);
-
-      for (let b = 0; b < totalBatches; b++) {
-        const sliceIdxs = speakableIndices.slice(b * batchSize, (b + 1) * batchSize);
-        setProgress(32 + ((b + 1) / Math.max(1, totalBatches)) * 24, `🧠 Pareando falas IA e filtrando takes clonados (Lote ${b + 1}/${totalBatches})...`);
-
-        const totalSlotSamples = sliceIdxs.length * slotSeconds * sampleRateTarget;
-        const batchPcm = new Int16Array(totalSlotSamples);
-        sliceIdxs.forEach((origIdx, slotPos) => {
-          batchPcm.set(pcm12kPerClip[origIdx], slotPos * slotSeconds * sampleRateTarget);
-          pcm12kPerClip[origIdx] = null;
-        });
-
-        const wavBlob = encodeMonoWav12k(batchPcm, sampleRateTarget);
-        const wData = await transcribeBatchGroq(wavBlob, CONFIG.groqKey, CONFIG.whisperLang);
-        const buckets = Array.from({ length: sliceIdxs.length }, () => []);
-
-        if (wData.words && wData.words.length > 0) {
-          for (const w of wData.words) {
-            const wStart = w.start !== undefined ? w.start : 0;
-            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor((wStart + 0.15) / slotSeconds)));
-            buckets[sPos].push(w.word);
-          }
-        } else if (wData.segments && wData.segments.length > 0) {
-          for (const seg of wData.segments) {
-            const mid = ((seg.start || 0) + (seg.end || seg.start || 0)) / 2.0;
-            const sPos = Math.min(sliceIdxs.length - 1, Math.max(0, Math.floor(mid / slotSeconds)));
-            buckets[sPos].push(seg.text);
-          }
-        }
-
-        sliceIdxs.forEach((origIdx, slotPos) => {
-          clipEntries[origIdx].transcript = buckets[slotPos].join(" ").replace(/\s+/g, " ").trim();
-          if (!clipEntries[origIdx].transcript) clipEntries[origIdx].isMuted = true;
-        });
-      }
-
-      const matchRes = assignClipsExclusivelyJS(clipEntries, activeScenes, CONFIG.endKeywords, dropMuted);
-      orderedClips = matchRes.kept;
-      discardedCount = matchRes.discardedCount;
-      missingScenes = matchRes.missingScenes;
-
-      if (!orderedClips.length && clipEntries.length) {
-        orderedClips = clipEntries.filter(c => !c.isMuted);
-        if (!orderedClips.length) orderedClips = clipEntries;
-      }
-    } else if (sortMode === "chron_flow" || (sortMode === "whisper" && !canUseWhisper)) {
-      orderedClips = clipEntries.filter(c => !dropMuted || !c.isMuted);
-      discardedCount = clipEntries.length - orderedClips.length;
-      orderedClips.sort((a, b) => (a.dateMs - b.dateMs) || a.name.localeCompare(b.name, undefined, { numeric: true }));
-      orderedClips.forEach((c, idx) => { c.matchedSceneIdx = idx < activeScenes.length ? idx : null; c.transcript = "(Ordem do pacote)"; c.score = 100; });
-    } else {
-      orderedClips = [...clipEntries].sort((a, b) => a.name.localeCompare(b.name, undefined, { numeric: true }));
-      orderedClips.forEach((c, idx) => { c.matchedSceneIdx = idx < activeScenes.length ? idx : null; c.transcript = "(Ordem alfabética)"; c.score = 100; });
-    }
-
-    const totalSelectedMB = orderedClips.reduce((acc, c) => acc + (c.byteLength || c.sizeHint || 0), 0) / 1048576;
-    logMsg(`🎬 Cenas únicas válidas: ${orderedClips.length} (${totalSelectedMB.toFixed(1)} MB) | Takes repetidos/mudos descartados: ${discardedCount}`);
-
-    const partBlobs = [];
-    let mustSplit = (!preferSingleFile && totalSelectedMB > 650) || (totalSelectedMB > 1250);
-
-    if (!mustSplit) {
-      try {
-        logMsg(`⚡ Gerando 1 ÚNICO ARQUIVO .MP4 contínuo com as ${orderedClips.length} cenas únicas (${totalSelectedMB.toFixed(0)} MB)...`);
-        const singleBlob = await joinScenesIntoSingleMp4(orderedClips, voiceFile, bgmFile, bgmVol, 58, 40, "");
-        partBlobs.push({ name: "VIDEO_FINAL_LIMPO_COMPLETO.mp4", label: "💾 BAIXAR VÍDEO COMPLETO SEM REPETIÇÕES", blob: singleBlob });
-      } catch (memErr) {
-        logMsg("⚠️ Memória contínua atingiu o teto da aba — dividindo automaticamente em 2 partes sem perda de qualidade...");
-        mustSplit = true;
-      }
-    }
-
-    if (mustSplit && partBlobs.length === 0) {
-      const numParts = Math.max(2, Math.ceil(totalSelectedMB / 500));
-      const perPart = Math.ceil(orderedClips.length / numParts);
-      for (let p = 0; p < numParts; p++) {
-        const sub = orderedClips.slice(p * perPart, (p + 1) * perPart);
-        const span = 40 / numParts;
-        const pBlob = await joinScenesIntoSingleMp4(sub, null, bgmFile, bgmVol, 58 + p * span, span, `[Parte ${p + 1}/${numParts}] `);
-        partBlobs.push({
-          name: `VIDEO_FINAL_PARTE_${p + 1}_DE_${numParts}.mp4`,
-          label: `💾 BAIXAR PARTE ${p + 1}/${numParts}`,
-          blob: pBlob
-        });
-      }
-    }
-
-    const srtText = buildSrt(orderedClips, activeScenes);
-    const srtBlob = new Blob([srtText], { type: "text/plain;charset=utf-8" });
-    const srtUrl = URL.createObjectURL(srtBlob);
-
-    setProgress(100, "🎉 Vídeo limpo (zero cenas repetidas) pronto para download!");
-
-    const dlBox = document.getElementById("dl-box");
-    dlBox.style.display = "block";
-    const sumMB = partBlobs.reduce((acc, b) => acc + b.blob.size, 0) / 1048576;
-
-    document.getElementById("dl-summary").innerText =
-      `✅ MONTAGEM v3.2 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
-      (discardedCount > 0 ? ` | 🧹 ${discardedCount} take(s) repetido(s)/mudo(s) eliminado(s)!` : "");
-
-    document.getElementById("dl-missing").innerText = missingScenes.length
-      ? `💡 Cenas do roteiro que não estavam no pacote (ou vieram mudas): Cena(s) ${missingScenes.join(", ")}.`
-      : "";
-
-    const btnContainer = document.getElementById("dl-buttons-container");
-    btnContainer.innerHTML = "";
-    partBlobs.forEach((pb) => {
-      const pUrl = URL.createObjectURL(pb.blob);
-      const pMB = (pb.blob.size / 1048576).toFixed(1);
-      const a = document.createElement("a");
-      a.className = "dl-btn dl-mp4";
-      a.href = pUrl;
-      a.download = pb.name;
-      a.innerText = `${pb.label} (${pMB} MB .MP4)`;
-      btnContainer.appendChild(a);
-    });
-
-    const aSrt = document.createElement("a");
-    aSrt.className = "dl-btn dl-srt";
-    aSrt.href = srtUrl;
-    aSrt.download = "Legenda_Sincronizada.srt";
-    aSrt.innerText = "📝 BAIXAR LEGENDA (.SRT)";
-    btnContainer.appendChild(aSrt);
-
-    const vidPreview = document.getElementById("preview-vid");
-    if (partBlobs[0].blob.size <= 380 * 1048576) {
-      vidPreview.src = URL.createObjectURL(partBlobs[0].blob);
-      vidPreview.style.display = "block";
-    }
-
-    orderedClips.forEach((c, idx) => {
-      logMsg(`Posição ${String(idx + 1).padStart(3, "0")} -> Cena ${c.matchedSceneIdx !== null ? c.matchedSceneIdx + 1 : "Extra"} (${c.score}%) | ${c.name} | "${(c.transcript || "").slice(0, 60)}"`);
-    });
-
-  } catch (err) {
-    console.error(err);
-    const msg = (err && (err.message || String(err))) || "Memória da aba excedida — clique em 'Abrir em Aba Dedicada (+RAM)' no topo direito!";
-    setProgress(0, "❌ Erro: " + msg);
-    logMsg("ERRO DETALHADO: " + msg);
-  } finally {
-    btn.disabled = false;
-  }
-});
-</script>
-</body>
-</html>
-"""
-
-def render_ffmpeg_wasm_assembler(raw_script, lang_label, groq_api_key, is_vertical, preserve_1to1=False):
-    scenes_parsed = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
-    js_scenes = [{"spoken": sc.get("spoken", "")} for sc in scenes_parsed if sc.get("spoken")]
-    cfg = {
-        "rawScript": raw_script or "",
-        "scenes": js_scenes,
-        "groqKey": groq_api_key if (groq_api_key and groq_api_key.startswith("gsk_")) else "",
-        "whisperLang": LANGUAGES[lang_label]["whisper_code"],
-        "endKeywords": LANGUAGES[lang_label]["end_keywords"],
-        "isVertical": is_vertical,
-        "preserve1to1": preserve_1to1
-    }
-    safe_json = json.dumps(cfg, ensure_ascii=False).replace("</", "<\\/")
-    html_out = FFMPEG_WASM_HTML_TEMPLATE.replace("__CONFIG_JSON__", safe_json)
-    components.html(html_out, height=840, scrolling=True)
-# ===============================================================================================
-
-def format_srt_timestamp(seconds_float):
-    ms = int(round((seconds_float - int(seconds_float)) * 1000))
-    s_int = int(seconds_float)
-    hrs = s_int // 3600
-    mins = (s_int % 3600) // 60
-    secs = s_int % 60
-    return f"{hrs:02d}:{mins:02d}:{secs:02d},{ms:03d}"
-
-def build_synchronized_srt(ordered_results, raw_script, lang_label, preserve_1to1=False):
-    script_scenes = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
-    srt_blocks = []
-    curr_time = 0.0
-    sub_idx = 1
-
-    for i, item in enumerate(ordered_results):
-        clip_dur = item.get("duration", 8.0)
-        if clip_dur <= 0.5:
-            clip_dur = 8.0
-
-        matched_sc_idx = item.get("matched_scene_idx")
-        text_line = ""
-        if matched_sc_idx is not None and 0 <= matched_sc_idx < len(script_scenes) and script_scenes[matched_sc_idx]["spoken"]:
-            text_line = script_scenes[matched_sc_idx]["spoken"]
-        elif item.get("transcript") and item["transcript"] not in ("(Ordenado por nome)", ""):
-            text_line = item["transcript"]
-
-        if text_line:
-            words = text_line.split()
-            if len(words) > 9:
-                mid = len(words) // 2
-                part1 = " ".join(words[:mid])
-                part2 = " ".join(words[mid:])
-                half_dur = clip_dur / 2.0
-                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time)} --> {format_srt_timestamp(curr_time + half_dur - 0.08)}\n{part1}\n")
-                sub_idx += 1
-                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time + half_dur)} --> {format_srt_timestamp(curr_time + clip_dur - 0.12)}\n{part2}\n")
-                sub_idx += 1
-            else:
-                srt_blocks.append(f"{sub_idx}\n{format_srt_timestamp(curr_time)} --> {format_srt_timestamp(curr_time + clip_dur - 0.12)}\n{text_line}\n")
-                sub_idx += 1
-
-        curr_time += clip_dur
-
-    return "\n".join(srt_blocks)
-
-def normalize_text(text):
-    if not text:
-        return ""
-    text = unicodedata.normalize('NFD', text.lower())
-    text = ''.join(c for c in text if unicodedata.category(c) != 'Mn')
-    text = re.sub(r'[^a-z0-9\s]', ' ', text)
-    return re.sub(r'\s+', ' ', text).strip()
-
-def transcribe_video_audio(video_path, recognizer, temp_wav, sr_lang_code, ffmpeg_exe):
-    import speech_recognition as sr
-    attempts = [
-        ('0.0', '8.2', 'volume=1.6'),
-        ('0.2', '7.8', 'volume=1.0'),
-        ('0.8', '7.0', 'volume=1.8'),
-        ('0.0', '5.0', 'volume=1.5')
-    ]
-    for start_sec, dur_sec, af_flt in attempts:
-        try:
-            cmd = [
-                ffmpeg_exe, '-y', '-ss', start_sec, '-i', video_path, '-t', dur_sec,
-                '-vn', '-af', af_flt, '-acodec', 'pcm_s16le', '-ar', '16000', '-ac', '1', temp_wav
-            ]
-            subprocess.run(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, check=True)
-            with sr.AudioFile(temp_wav) as source:
-                audio_data = recognizer.record(source)
-            text = recognizer.recognize_google(audio_data, language=sr_lang_code)
-            if text and len(text.strip()) >= 4:
-                return text.strip()
-        except Exception:
-            continue
-    return ""
-
-def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_unmatched=True, preserve_1to1=False):
-    from rapidfuzz import fuzz
-    from collections import Counter
-
-    script_scenes = extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=preserve_1to1)
-    scene_norms = [normalize_text(sc.get("spoken", "")) for sc in script_scenes]
-    num_scenes = len(scene_norms)
-
-    if num_scenes == 0:
-        clips_info.sort(key=lambda x: x["original_name"].lower())
-        for idx, c in enumerate(clips_info):
-            c["position"] = idx
-            c["matched_scene_idx"] = None
-            c["match_score"] = 100.0
-        return clips_info, [], []
-
-    word_freq = Counter()
-    scene_word_sets = []
-    for sn in scene_norms:
-        w_set = {w for w in sn.split() if len(w) >= 4}
-        scene_word_sets.append(w_set)
-        for w in w_set:
-            word_freq[w] += 1
-
-    end_kws = LANGUAGES[lang_label]["end_keywords"]
-    best_per_clip = {}
-    candidate_pairs = []
-
-    for c_idx, clip in enumerate(clips_info):
-        t_norm = normalize_text(clip.get("transcript", ""))
-        clip["t_norm"] = t_norm
-        if not t_norm or len(t_norm) < 5:
-            continue
-
-        t_words = {w for w in t_norm.split() if len(w) >= 4}
-        has_end_kw = any(kw in t_norm for kw in end_kws)
-        max_sc, max_s = 0.0, -1
-
-        for s_idx, s_norm in enumerate(scene_norms):
-            if not s_norm:
-                continue
-
-            r_full = fuzz.ratio(t_norm, s_norm)
-            r_sort = fuzz.token_sort_ratio(t_norm, s_norm)
-            base_score = (r_full * 0.62) + (r_sort * 0.38)
-
-            s_words = scene_word_sets[s_idx]
-            shared_rare_bonus = 0.0
-            for sw in (t_words & s_words):
-                if word_freq[sw] == 1:
-                    shared_rare_bonus += 8.5
-                elif word_freq[sw] == 2:
-                    shared_rare_bonus += 3.5
-            score = min(100.0, base_score + min(22.0, shared_rare_bonus))
-
-            if has_end_kw and s_idx == num_scenes - 1:
-                score = min(100.0, score + 18.0)
-            elif has_end_kw and s_idx < num_scenes - 2:
-                score -= 25.0
-
-            if score > max_sc:
-                max_sc, max_s = score, s_idx
-            candidate_pairs.append((score, c_idx, s_idx))
-
-        best_per_clip[c_idx] = (max_s, max_sc)
-
-    candidate_pairs.sort(key=lambda x: x[0], reverse=True)
-
-    assigned_clips = {}
-    used_scenes = set()
-    accepted_norms = []
-
-    for score, c_idx, s_idx in candidate_pairs:
-        if score < 50.0:
-            break
-        if c_idx in assigned_clips or s_idx in used_scenes:
-            continue
-
-        b_s, b_sc = best_per_clip.get(c_idx, (-1, 0.0))
-        if s_idx != b_s and score < (b_sc - 7.5):
-            continue
-
-        cand_norm = clips_info[c_idx]["t_norm"]
-        is_clone = False
-        for prev_s_idx, prev_norm in accepted_norms:
-            if max(fuzz.ratio(cand_norm, prev_norm), fuzz.token_sort_ratio(cand_norm, prev_norm)) >= 70.0:
-                if fuzz.ratio(scene_norms[s_idx], scene_norms[prev_s_idx]) < 75.0:
-                    is_clone = True
-                    break
-        if is_clone:
-            continue
-
-        assigned_clips[c_idx] = (float(s_idx), s_idx, score)
-        used_scenes.add(s_idx)
-        accepted_norms.append((s_idx, cand_norm))
-
-    kept_clips = []
-    discarded_clips = []
-
-    for c_idx, clip in enumerate(clips_info):
-        if c_idx in assigned_clips:
-            pos_val, sc_i, sc_score = assigned_clips[c_idx]
-            clip["position"] = pos_val
-            clip["matched_scene_idx"] = sc_i
-            clip["match_score"] = round(sc_score, 1)
-            kept_clips.append(clip)
-        else:
-            clip["position"] = 99999.0 + c_idx
-            clip["matched_scene_idx"] = None
-            clip["match_score"] = 0.0
-            if drop_unmatched:
-                discarded_clips.append(clip)
-            else:
-                kept_clips.append(clip)
-
-    kept_clips.sort(key=lambda x: (x["position"], x["original_name"].lower()))
-    missing_scene_numbers = [idx + 1 for idx in range(num_scenes) if idx not in used_scenes]
-
-    return kept_clips, discarded_clips, missing_scene_numbers
-
-# ================= TOPO DO ESTÚDIO & VÍDEO TUTORIAL =================
-is_admin = (st.session_state.get("user_role") == "admin")
-col_hdr1, col_hdr2 = st.columns([5, 1])
-with col_hdr1:
-    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.2 & SEO")
-with col_hdr2:
-    st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
-    if st.button("🔒 Sair", use_container_width=True):
-        for k in list(st.session_state.keys()):
-            del st.session_state[k]
-        st.rerun()
-
-tutorial_url = ""
-try:
-    tutorial_url = str(st.secrets.get("TUTORIAL_VIDEO_URL", "")).strip()
-except Exception:
-    tutorial_url = ""
-
-with st.expander("▶️ PASSO A PASSO RÁPIDO: Qual Modo escolher (Narrador, Diálogo ou Seu Próprio Áudio)"):
-    if tutorial_url:
-        st.video(tutorial_url)
-    st.markdown(
-        "* **🎙️ Modo 1 (Narrador Fixo):** Ideal para histórias bíblicas (ex: *Davi e Golias*), documentários de cidades e curiosidades.\n"
-        "* **🗣️ Modo 2 (Diálogo Entre Personagens):** Para 2 personagens conversando com Lip-Sync (se deixar as caixas no padrão ou vazias, a IA adapta os personagens ao tema automaticamente!).\n"
-        "* **🎧 Modo 3 (Seu Próprio Áudio):** Suba seu `.MP3/.WAV` gravado — a IA fatia de 8 em 8s com trava 1-para-1, cria os cenários exatos da sua fala e troca pela sua voz na Aba 2!\n"
-        "* **💡 No Google Flow:** Envie pela **Extensão VIP v2.0** (ou de 5 em 5 cenas se colar no chat lateral) para nunca cair no limite de alta demanda."
-    )
-
-col_top1, col_top2, col_top3 = st.columns([1.1, 1.1, 1.6])
-with col_top1:
-    selected_lang = st.selectbox("🌍 Idioma do Projeto:", list(LANGUAGES.keys()))
-with col_top2:
-    aspect_ratio = st.selectbox(
-        "📐 Formato da Tela:",
-        ["🖥️ 16:9 Horizontal (YouTube Longo)", "📱 9:16 Vertical (TikTok / Shorts / Reels)"]
-    )
-    is_vertical = ("9:16" in aspect_ratio)
-    aspect_short = "Vertical 9:16 portrait video" if is_vertical else "Horizontal 16:9 widescreen video"
-
-with col_top3:
-    if is_admin:
-        admin_secret_key = ""
-        try:
-            admin_secret_key = str(st.secrets.get("API_KEY", "") or st.secrets.get("GEMINI_API_KEY", "")).strip()
-        except Exception:
-            admin_secret_key = ""
-        override_key = st.text_input(
-            "🔑 Modo Admin (Sua chave oculta já está ativa — ou cole outra):",
-            value="",
-            type="password",
-            placeholder="Usando sua API_KEY oculta automaticamente"
-        )
-        active_api_key = override_key.strip() if override_key.strip() else admin_secret_key
-    else:
-        active_api_key = st.text_input(
-            "🔑 Sua Chave Gratuita Groq ('gsk_...' — cole e aperte ENTER):",
-            value="",
-            type="password",
-            placeholder="Pegue grátis em console.groq.com/keys"
-        ).strip()
-
-tab1, tab2, tab3 = st.tabs([
-    "📝 1. Personagens, Roteiro & Prompts",
-    "⚡ 2. Montagem Local FFmpeg.wasm v3.2 (Zero Repetições)",
-    "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
-])
-
-with tab1:
-    cf_btn1, cf_btn2 = st.columns([1, 1])
-    with cf_btn1:
-        components.html(
-            """<button onclick="window.open('https://labs.google/fx/pt/tools/flow','FlowPopup','width=980,height=860,left=920,top=60');"
-            style="width:100%;padding:10px 14px;background:#1d4ed8;color:white;border:none;border-radius:8px;font-weight:600;font-family:sans-serif;cursor:pointer;font-size:14px;">
-            ⚡ Abrir Google Flow em Janela Lateral (Login Seguro)
-            </button>""",
-            height=48
-        )
-    with cf_btn2:
-        st.download_button(
-            "🧩 Baixar Extensão Chrome VIP v2.0 (Linha Única — Evita Limite de Alta Demanda)",
-            data=build_chrome_extension_zip(),
-            file_name="Extensao_VIP_Estudio_Pro_Flow_v2.zip",
-            mime="application/zip",
-            use_container_width=True
-        )
-
-    st.markdown("### 🎛️ Passo 1: Modo de Áudio e Upload dos Personagens")
-    audio_mode = st.radio(
-        "Como será o áudio e a atuação deste vídeo?",
-        [
-            "🎙️ Modo 1: Narrador Fixo (Ideal p/ Histórias Bíblicas, Documentários e Contos — Mesma Voz do Início ao Fim)",
-            "🗣️ Modo 2: Diálogo Entre Personagens (2 Personagens Conversando com Lip-Sync)",
-            "🎧 Modo 3: Usar Meu Próprio Áudio Gravado (.MP3 / .WAV — Sincronia 1:1 de 8 em 8s + Troca na Montagem)"
-        ]
-    )
-
-    voice_choice = "🎙️ Voz Masculina Fixa (Barítono 35 anos)"
-    custom_voice_timbre = ""
-    mute_flow_for_custom = False
-    has_ref_image = False
-
-    if "Modo 1" in audio_mode or "Modo 3" in audio_mode:
-        cm1, cm2 = st.columns([1, 1])
-        with cm1:
-            if "Modo 1" in audio_mode:
-                voice_choice = st.radio("Gênero da Voz Fixa:", ["🎙️ Voz Masculina Fixa (Barítono 35 anos)", "🎙️ Voz Feminina Fixa (Mezzo-Soprano 32 anos)"])
-                custom_voice_timbre = st.text_input("Assinatura extra de voz (Opcional):", placeholder="Ex: Sotaque mineiro acolhedor, ritmo calmo")
-            else:
-                ref_audio_file = st.file_uploader("🎵 Suba seu áudio gravado (.mp3, .wav, .m4a) para fatiar de 8 em 8s:", type=["mp3", "wav", "m4a", "ogg"])
-                mute_flow_for_custom = st.checkbox(
-                    "Gerar vídeos mudos no Flow (Dica: deixe DESMARCADO para o Whisper alinhar a ordem exata na Aba 2 antes de trocar pelo seu áudio!)",
-                    value=False
-                )
-                if ref_audio_file is not None:
-                    if st.button("🎧 LER MEU ÁUDIO E MONTAR ROTEIRO SINCRONIZADO (8 EM 8s)", type="primary", use_container_width=True):
-                        with st.spinner("Transcrevendo seu áudio em janelas cravadas de 8.0 segundos (Whisper Turbo)..."):
-                            ffmpeg_exe = get_ffmpeg()
-                            tmp_dir_a = tempfile.mkdtemp()
-                            try:
-                                tmp_aud = os.path.join(tmp_dir_a, ref_audio_file.name)
-                                with open(tmp_aud, "wb") as fa:
-                                    fa.write(ref_audio_file.getbuffer())
-                                t_script, dur_s, n_sc = transcribe_uploaded_audio_chunks(
-                                    tmp_aud,
-                                    LANGUAGES[selected_lang]["sr_code"],
-                                    LANGUAGES[selected_lang]["whisper_code"],
-                                    active_api_key,
-                                    ffmpeg_exe
-                                )
-                                st.session_state["saved_script"] = t_script
-                                st.session_state["custom_audio_1to1_lock"] = True
-                                st.session_state["auto_duration_min"] = max(1, math.ceil(dur_s / 60.0))
-                                st.success(f"✅ Áudio transcrito ({dur_s:.1f}s ➔ {n_sc} cenas exatas de 8s)! Agora clique no botão azul lá embaixo para o Diretor Visual criar as imagens de cada trecho.")
-                            finally:
-                                shutil.rmtree(tmp_dir_a, ignore_errors=True)
-        with cm2:
-            up_single = st.file_uploader("📸 Opcional: Subir Foto do Personagem ou Produto Fixo:", type=["png", "jpg", "jpeg", "webp"], key="up_single")
-            if up_single is not None:
-                has_ref_image = True
-                st.image(up_single, width=140, caption="Referência Visual")
-                if st.button("🔍 EXTRAIR DNA FÍSICO DA FOTO (IA)", key="btn_single_dna", use_container_width=True):
-                    with st.spinner("Analisando cada detalhe na foto..."):
-                        dna_res, err_v = analyze_character_photo(up_single, active_api_key)
-                        if err_v:
-                            st.error(err_v)
-                        else:
-                            st.session_state["dna_single_char"] = dna_res
-                            st.success("✅ DNA visual extraído e travado!")
-            st.text_area(
-                "🧬 DNA Físico Fixo do Protagonista (Opcional — se deixar vazio em histórias, a IA cria sozinha!):",
-                key="dna_single_char",
-                height=90
-            )
-
-    elif "Modo 2" in audio_mode:
-        orient_label = "9:16" if is_vertical else "16:9"
-        st.info(f"💡 **Modo Diálogo Inteligente ({orient_label}):** Suba fotos abaixo OU apenas digite o tema no Passo 2 (se deixar os campos vazios ou no exemplo padrão, a IA adapta os 2 personagens e as vozes automaticamente para a época do tema!).")
-        up_col1, up_col2 = st.columns([1, 1])
-        with up_col1:
-            up_char_a = st.file_uploader("📸 Subir Foto do Personagem A (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_a")
-            if up_char_a is not None:
-                has_ref_image = True
-                st.image(up_char_a, width=140, caption="Foto Personagem A")
-        with up_col2:
-            up_char_b = st.file_uploader("📸 Subir Foto do Personagem B (Opcional):", type=["png", "jpg", "jpeg", "webp"], key="up_b")
-            if up_char_b is not None:
-                has_ref_image = True
-                st.image(up_char_b, width=140, caption="Foto Personagem B")
-
-        if up_char_a is not None or up_char_b is not None:
-            b_col1, b_col2 = st.columns([1, 1])
-            with b_col1:
-                if st.button("🔍 EXTRAIR DNA FÍSICO E ROUPAS DAS FOTOS ENVIADAS (IA)", type="primary", use_container_width=True):
-                    with st.spinner("Lendo traços faciais, cabelo e roupas exatas nas fotos..."):
-                        if up_char_a is not None:
-                            dna_a, err_a = analyze_character_photo(up_char_a, active_api_key)
-                            if err_a:
-                                st.error(f"Foto A: {err_a}")
-                            else:
-                                st.session_state["dna_char_a"] = dna_a
-                        if up_char_b is not None:
-                            dna_b, err_b = analyze_character_photo(up_char_b, active_api_key)
-                            if err_b:
-                                st.error(f"Foto B: {err_b}")
-                            else:
-                                st.session_state["dna_char_b"] = dna_b
-                        st.success("✅ DNA físico extraído das fotos com precisão!")
-            with b_col2:
-                duo_png = build_duo_reference_card(up_char_a, up_char_b, is_vertical=is_vertical)
-                if duo_png:
-                    st.download_button(
-                        f"🖼️ Baixar Cartão {orient_label} dos Personagens (Subir no Flow)",
-                        data=duo_png,
-                        file_name=f"Referencia_Personagens_Flow_{orient_label.replace(':', 'x')}.png",
-                        mime="image/png",
-                        use_container_width=True
-                    )
-
-        cd1, cd2 = st.columns([1, 1])
-        with cd1:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem A:", key="dna_char_a", height=95)
-            st.text_input("🎙️ Trava de Voz — Personagem A:", key="voice_char_a")
-        with cd2:
-            st.text_area("👤 DNA Físico e Roupa Fixa — Personagem B:", key="dna_char_b", height=95)
-            st.text_input("🎙️ Trava de Voz — Personagem B:", key="voice_char_b")
-
-    st.divider()
-    st.markdown("### 🤖 Passo 2: Gerar Roteiro pela IA ou Colar Qualquer Roteiro / Texto Puro")
-    col_t1, col_t2, col_t3 = st.columns([3, 1, 1])
-    with col_t1:
-        video_title = st.text_input("Título ou Tema Geral do Vídeo:", placeholder="Ex: A História de Davi e Golias / Juiz de Fora vs Uberlândia")
-    with col_t2:
-        duration_min = st.number_input("Duração (Minutos):", min_value=1, max_value=15, value=st.session_state["auto_duration_min"], step=1)
-    with col_t3:
-        total_scenes_calc = max(4, int((duration_min * 60) // 8))
-        st.metric("Total de Cenas (8s)", f"{total_scenes_calc} cenas")
-
-    cs1, cs2 = st.columns([1, 1])
-    with cs1:
-        style_choice = st.selectbox("Estilo Visual Fixo:", list(STYLE_PRESETS.keys()))
-        custom_style = st.text_input("Descreva o estilo visual personalizado:") if style_choice == "Personalizado (Definir abaixo)" else ""
-
-        if st.button("🪄 CRIAR ROTEIRO COMPLETO PELA IA", use_container_width=True):
-            if not video_title.strip():
-                st.warning("Digite o tema ou situação primeiro.")
-            else:
-                st.session_state["custom_audio_1to1_lock"] = False
-                eff_a = st.session_state.get("dna_char_a", "").strip()
-                eff_b = st.session_state.get("dna_char_b", "").strip()
-
-                if "Modo 2" in audio_mode and not has_ref_image and (
-                    not eff_a or not eff_b or (eff_a == DEFAULT_CHAR_A and eff_b == DEFAULT_CHAR_B)
-                ):
-                    with st.spinner(f"🎭 Criando ficha física e vocal dos personagens de '{video_title}'..."):
-                        adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
-                        if adapted:
-                            eff_a = adapted["DNA_A"]
-                            eff_b = adapted["DNA_B"]
-                            sync_dict = {"dna_char_a": eff_a, "dna_char_b": eff_b}
-                            if "VOICE_A" in adapted:
-                                sync_dict["voice_char_a"] = adapted["VOICE_A"]
-                            if "VOICE_B" in adapted:
-                                sync_dict["voice_char_b"] = adapted["VOICE_B"]
-                            st.session_state["_pending_cast_sync"] = sync_dict
-
-                with st.spinner(f"Criando roteiro linear cronológico ({total_scenes_calc} cenas)..."):
-                    script_out, err_msg = generate_ai_script(
-                        video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_short,
-                        eff_a, eff_b, st.session_state.get("dna_single_char", ""), active_api_key
-                    )
-                    if err_msg:
-                        st.error(err_msg)
-                    else:
-                        st.session_state["saved_script"] = script_out
-                        st.rerun()
-
-        auto_director_enabled = st.checkbox(
-            "🎬 Diretor Visual + Auto-DNA de Elenco (Trava cabelo/roupa automaticamente mesmo sem foto)",
-            value=True
-        )
-        lock_1to1_mode = st.checkbox(
-            "🔒 Trava 1-para-1 de Blocos (Mantém exatamente 1 cena de 8s por bloco de tempo — Ideal para Áudio Próprio)",
-            value=("Modo 3" in audio_mode or st.session_state.get("custom_audio_1to1_lock", False))
-        )
-
-    with cs2:
-        script_for_prompts = st.text_area(
-            "Roteiro ou Texto Puro (Aceita qualquer formato: com/sem tempo, com/sem [CENA:] ou texto corrido puro!):",
-            value=st.session_state["saved_script"],
-            height=275
-        )
-
-    if st.button("✨ FATIAR EM 8s, TRAVAR ELENCO & GERAR PROMPTS EM LINHA ÚNICA", type="primary", use_container_width=True):
-        if not script_for_prompts.strip():
-            st.warning("Gere ou cole um roteiro/texto primeiro.")
-        else:
-            st.session_state["saved_script"] = script_for_prompts
-            is_silent_custom = ("Modo 3" in audio_mode and mute_flow_for_custom)
-            scenes = extract_scenes_for_prompts(
-                script_for_prompts,
-                selected_lang,
-                preserve_1to1_blocks=lock_1to1_mode,
-                allow_empty_speech=is_silent_custom
-            )
-
-            eff_dna_a = st.session_state.get("dna_char_a", "").strip()
-            eff_dna_b = st.session_state.get("dna_char_b", "").strip()
-            eff_voice_a = st.session_state.get("voice_char_a", "").strip()
-            eff_voice_b = st.session_state.get("voice_char_b", "").strip()
-
-            if "Modo 2" in audio_mode and video_title.strip() and active_api_key:
-                if not eff_dna_a or not eff_dna_b or (not has_ref_image and eff_dna_a == DEFAULT_CHAR_A and eff_dna_b == DEFAULT_CHAR_B):
-                    with st.spinner(f"🎭 Preenchendo aparência e vozes fiéis à época para '{video_title}'..."):
-                        adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
-                        if adapted:
-                            eff_dna_a = adapted["DNA_A"]
-                            eff_dna_b = adapted["DNA_B"]
-                            if "VOICE_A" in adapted:
-                                eff_voice_a = adapted["VOICE_A"]
-                            if "VOICE_B" in adapted:
-                                eff_voice_b = adapted["VOICE_B"]
-                            st.session_state["_pending_cast_sync"] = {
-                                "dna_char_a": eff_dna_a,
-                                "dna_char_b": eff_dna_b,
-                                "voice_char_a": eff_voice_a,
-                                "voice_char_b": eff_voice_b
-                            }
-
-            effective_char_lock = st.session_state.get("dna_single_char", "").strip()
-            if not effective_char_lock and "Modo 2" not in audio_mode and auto_director_enabled and active_api_key:
-                with st.spinner("🧬 Travando aparência fixa dos personagens (cabelo, rosto e traje da época)..."):
-                    auto_cast = generate_auto_cast_dna(video_title.strip(), script_for_prompts, style_choice, active_api_key)
-                    st.session_state["auto_cast_dna"] = auto_cast
-                    effective_char_lock = auto_cast
-            elif not effective_char_lock:
-                effective_char_lock = st.session_state.get("auto_cast_dna", "")
-
-            if effective_char_lock and "Modo 2" not in audio_mode:
-                st.info(f"🧬 **Trava Automática de Aparência Ativada em Todas as Cenas:** `{effective_char_lock}`")
-
-            if auto_director_enabled and any(sc.get("needs_ai_visual") for sc in scenes):
-                prog_dir = st.empty()
-                scenes = enrich_scenes_with_ai_visuals(
-                    scenes,
-                    video_title.strip(),
-                    style_choice,
-                    audio_mode,
-                    effective_char_lock,
-                    active_api_key,
-                    progress_placeholder=prog_dir
-                )
-            else:
-                for sc in scenes:
-                    if not sc.get("visual"):
-                        sc["visual"] = "Cinematic 4K footage matching the narrated topic with period-accurate wardrobe, zero text on screen"
-
-            visual_anchor = custom_style if style_choice == "Personalizado (Definir abaixo)" else STYLE_PRESETS[style_choice]
-            lang_en_name = LANGUAGES[selected_lang]["name_en"]
-            ref_tag = "Match uploaded reference character image(s). " if has_ref_image else ""
-
-            est_mins = round((len(scenes) * 8) / 60.0, 1)
-            st.success(f"✅ {len(scenes)} Cenas em Linha Única prontas (~{est_mins} min) — Zero Cenas Vazias & Protegidas contra Bloqueio!")
-            all_prompts_text = []
-
-            for idx, sc in enumerate(scenes, 1):
-                clean_spoken = fix_pronunciation(sc["spoken"].replace('"', "'").strip(), selected_lang)
-                safe_vis = sanitize_visual_for_veo_safety(sc["visual"])
-
-                if "Modo 2" in audio_mode:
-                    is_a = (sc["speaker"] != "B")
-                    active_char = "Character A" if is_a else "Character B"
-                    silent_char = "Character B" if is_a else "Character A"
-                    active_voice = (eff_voice_a if is_a else eff_voice_b) or "expressive native voice"
-                    cast_prefix = ""
-                    if eff_dna_a:
-                        cast_prefix += f"Character A: {eff_dna_a}. "
-                    if eff_dna_b:
-                        cast_prefix += f"Character B: {eff_dna_b}. "
-                    raw_p = (
-                        f"{aspect_short}. {visual_anchor} {ref_tag}{cast_prefix}"
-                        f"Scene action: {safe_vis}. ONLY {active_char} moves mouth with natural lip-sync while {silent_char} listens silently. "
-                        f"AUDIO RULE (MANDATORY AUDIBLE SPEECH IN {lang_en_name}, ZERO SILENT VIDEO, ZERO ENGLISH, zero music): "
-                        f"{active_char} ({active_voice}) speaks clearly in native {lang_en_name}: \"{clean_spoken}\""
-                    )
-                elif is_silent_custom:
-                    char_clause = f"Character Appearance Lock: {effective_char_lock}. " if effective_char_lock else ""
-                    raw_p = (
-                        f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {safe_vis}. Characters keep mouths closed in silence. "
-                        f"AUDIO RULE: Silent ambient sound only, zero speech, zero narration, zero music."
-                    )
-                else:
-                    char_clause = f"Character Appearance Lock (NEVER alter hair or outfit): {effective_char_lock}. " if effective_char_lock else ""
-                    voice_short = get_compact_voice_profile(voice_choice, custom_voice_timbre)
-                    raw_p = (
-                        f"{aspect_short}. {visual_anchor} {ref_tag}{char_clause}"
-                        f"Scene action: {safe_vis}. Characters on screen DO NOT speak and keep mouths closed (off-screen studio narration). "
-                        f"VOICE & LANGUAGE LOCK (MANDATORY AUDIBLE VOICEOVER IN {lang_en_name}, NEVER MUTE, ZERO EXTRA WORDS, ZERO ENGLISH, zero music): "
-                        f"{voice_short} speaks ONLY this exact line in native {lang_en_name}: \"{clean_spoken}\""
-                    )
-
-                p_box = re.sub(r'[\r\n]+', ' ', raw_p)
-                p_box = re.sub(r'\s+', ' ', p_box).strip()
-
-                all_prompts_text.append(f"=== CENA {idx:03d} ===\n{p_box}\n")
-                with st.expander(f"🎬 Cena {idx:03d} ({len(clean_spoken.split())} palavras) — \"{clean_spoken[:65]}...\"", expanded=(idx <= 3)):
-                    st.code(p_box, language="text")
-
-            full_txt_joined = "\n".join(all_prompts_text)
-            st.download_button("📥 Baixar Todos os Prompts (.TXT)", data=full_txt_joined, file_name="Prompts_Flow.txt", use_container_width=True)
-            with st.expander("📋 Ou copie todos os prompts de uma vez para colar na Extensão VIP v2.0"):
-                st.code(full_txt_joined, language="text")
-
-with tab2:
-    st.subheader(f"Montagem Final ({'9:16 Vertical' if is_vertical else '16:9 Horizontal'})")
-
-    engine_choice = st.radio(
-        "⚙️ Escolha onde processar os vídeos:",
-        [
-            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.2 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
-            "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB)"
-        ],
-        index=0
-    )
-
-    is_1to1_active = bool(st.session_state.get("custom_audio_1to1_lock", False))
-
-    if "FFmpeg.wasm" in engine_choice:
-        render_ffmpeg_wasm_assembler(st.session_state.get("saved_script", ""), selected_lang, active_api_key, is_vertical, preserve_1to1=is_1to1_active)
-    else:
-        roteiro_input = st.text_area(
-            "📜 Roteiro Completo ou Prompts_Flow.txt (Usado para alinhar as cenas e gerar a legenda .SRT):",
-            value=st.session_state.get("saved_script", ""),
-            height=180
-        )
-        if roteiro_input != st.session_state.get("saved_script", ""):
-            st.session_state["saved_script"] = roteiro_input
-
-        static_delivery_dir = os.path.join(os.getcwd(), "static", "entregas")
-        os.makedirs(static_delivery_dir, exist_ok=True)
-        now_ts = time.time()
-        for old_f in os.listdir(static_delivery_dir):
-            old_p = os.path.join(static_delivery_dir, old_f)
-            try:
-                if os.path.isfile(old_p) and (now_ts - os.path.getmtime(old_p)) > 1800:
-                    os.remove(old_p)
-            except Exception:
-                pass
-
-        col1, col2 = st.columns([1, 1])
-        with col1:
-            drop_muted_dups = st.checkbox("🧹 Ignorar automaticamente clipes mudos e takes extras duplicados", value=True)
-            compress_long_video = st.checkbox("⚡ Otimizar tamanho final para vídeos longos", value=True)
-            burn_subs = st.checkbox("💬 Gravar legendas embutidas direto na imagem do vídeo", value=False)
-            sort_method = st.radio(
-                "Como ordenar os clipes antes de juntar?",
-                [
-                    "🗣️ Pareamento Exclusivo v3.2 Anti-Duplicatas",
-                    "🔢 Ordenar apenas pelo nome dos arquivos"
-                ]
-            )
-
-        with col2:
-            up_key = f"zip_uploader_{st.session_state['uploader_reset_id']}"
-            uploaded_files = st.file_uploader(
-                "📦 Envie o .ZIP (até ~180MB) ou os .MP4:",
-                type=["zip", "mp4"],
-                accept_multiple_files=True,
-                key=up_key
-            )
-            ca_mix1, ca_mix2 = st.columns([1, 1])
-            with ca_mix1:
-                master_custom_audio = st.file_uploader("🎙️ Trocar Voz Principal / Seu Áudio (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_voice_rep")
-            with ca_mix2:
-                bg_music_file = st.file_uploader("🎵 Música de Fundo (Opcional):", type=["mp3", "wav", "m4a", "ogg"], key="up_bgm")
-
-            bgm_vol_pct = 12
-            if bg_music_file is not None:
-                bgm_vol_pct = st.slider("🔉 Volume da Música de Fundo (%):", min_value=3, max_value=40, value=12, step=1)
-
-        if st.button("🚀 ORGANIZAR NA NUVEM E GERAR LINK DIRETO", type="primary", use_container_width=True):
-            if not uploaded_files:
-                st.error("⚠️ Envie o arquivo .ZIP ou os vídeos .MP4.")
-            elif "Pareamento" in sort_method and (not roteiro_input or len(roteiro_input.strip()) < 10):
-                st.error("Cole o roteiro acima primeiro.")
-            else:
-                import speech_recognition as sr
-                sem = get_render_semaphore()
-                wait_box = st.empty()
-                wait_box.info("⏳ Entrando na fila de renderização...")
-
-                with sem:
-                    wait_box.empty()
-                    ffmpeg_exe = get_ffmpeg()
-                    work_dir = tempfile.mkdtemp()
-
-                    try:
-                        extract_dir = os.path.join(work_dir, "extraidos")
-                        ordered_dir = os.path.join(work_dir, "ordenados")
-                        os.makedirs(extract_dir, exist_ok=True)
-                        os.makedirs(ordered_dir, exist_ok=True)
-
-                        mp4_files = []
-                        for uf in uploaded_files:
-                            uf.seek(0)
-                            if uf.name.lower().endswith(".zip"):
-                                with zipfile.ZipFile(uf, 'r') as z:
-                                    for m in z.namelist():
-                                        if m.lower().endswith('.mp4') and not m.startswith('__MACOSX'):
-                                            fn = os.path.basename(m)
-                                            if fn:
-                                                t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{fn}")
-                                                with z.open(m) as src, open(t_path, 'wb') as dst:
-                                                    shutil.copyfileobj(src, dst, length=2 * 1024 * 1024)
-                                                if os.path.getsize(t_path) > 1000:
-                                                    mp4_files.append(t_path)
-                            elif uf.name.lower().endswith(".mp4"):
-                                t_path = os.path.join(extract_dir, f"{len(mp4_files):04d}_{uf.name}")
-                                with open(t_path, "wb") as f:
-                                    shutil.copyfileobj(uf, f, length=2 * 1024 * 1024)
-                                if os.path.getsize(t_path) > 1000:
-                                    mp4_files.append(t_path)
-                            try:
-                                uf.close()
-                            except Exception:
-                                pass
-
-                        del uploaded_files
-                        gc.collect()
-
-                        if not mp4_files:
-                            st.error("Nenhum vídeo .MP4 válido foi encontrado.")
-                        else:
-                            raw_clips = []
-                            p_bar = st.progress(0, text="Transcrevendo cenas...")
-                            total = len(mp4_files)
-                            discarded_list = []
-
-                            if "Pareamento" in sort_method:
-                                recognizer = sr.Recognizer()
-                                temp_wav = os.path.join(work_dir, "_temp.wav")
-                                sr_code = LANGUAGES[selected_lang]["sr_code"]
-                                for idx, v_path in enumerate(mp4_files, 1):
-                                    fn = os.path.basename(v_path)
-                                    tr = transcribe_video_audio(v_path, recognizer, temp_wav, sr_code, ffmpeg_exe)
-                                    dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                    raw_clips.append({'path': v_path, 'original_name': fn, 'transcript': tr, 'duration': dur_c})
-                                    if idx % 15 == 0:
-                                        gc.collect()
-                                    p_bar.progress((idx / total) * 0.62, text=f"Escutando clipe {idx}/{total}: '{tr[:40] or '[Sem fala]'}'")
-                                results, discarded_list, _ = assign_clips_to_scenes_exclusively(
-                                    raw_clips, roteiro_input, selected_lang, drop_unmatched=drop_muted_dups, preserve_1to1=is_1to1_active
-                                )
-                                for dc in discarded_list:
-                                    try:
-                                        os.remove(dc["path"])
-                                    except Exception:
-                                        pass
-                                if not results and discarded_list:
-                                    results = sorted(discarded_list, key=lambda x: x["original_name"].lower())
-                            else:
-                                mp4_files.sort(key=lambda p: os.path.basename(p).lower())
-                                results = []
-                                for idx, v_path in enumerate(mp4_files, 1):
-                                    dur_c = get_media_duration_sec(v_path, ffmpeg_exe)
-                                    results.append({
-                                        'path': v_path, 'original_name': os.path.basename(v_path),
-                                        'transcript': '(Ordenado por nome)', 'position': idx,
-                                        'matched_scene_idx': idx - 1, 'match_score': 100.0, 'duration': dur_c
-                                    })
-                                    p_bar.progress((idx / total) * 0.65, text=f"Preparando cena {idx}/{total}...")
-
-                            if results:
-                                srt_content = build_synchronized_srt(results, roteiro_input, selected_lang, preserve_1to1=is_1to1_active)
-                                srt_file_path = os.path.join(work_dir, "legendas.srt")
-                                with open(srt_file_path, "w", encoding="utf-8") as sf:
-                                    sf.write(srt_content)
-
-                                c_list = os.path.join(ordered_dir, 'lista_uniao.txt')
-                                with open(c_list, 'w', encoding='utf-8') as cf:
-                                    for s_num, item in enumerate(results, 1):
-                                        n_path = os.path.join(ordered_dir, f"Cena_{s_num:03d}.mp4")
-                                        os.replace(item['path'], n_path)
-                                        item['path'] = n_path
-                                        cf.write(f"file '{n_path.replace(chr(92), '/')}'\n")
-
-                                joined_mp4 = os.path.join(work_dir, "VIDEO_UNIDO_BASE.mp4")
-                                p_bar.progress(0.78, text="Unindo cenas...")
-                                subprocess.run(
-                                    [ffmpeg_exe, '-y', '-f', 'concat', '-safe', '0', '-i', c_list, '-c', 'copy', '-movflags', '+faststart', joined_mp4],
-                                    stdout=subprocess.PIPE, stderr=subprocess.PIPE
-                                )
-                                shutil.rmtree(extract_dir, ignore_errors=True)
-                                shutil.rmtree(ordered_dir, ignore_errors=True)
-
-                                out_mp4 = joined_mp4
-                                if compress_long_video and len(results) >= 25 and os.path.exists(out_mp4):
-                                    comp_mp4 = os.path.join(work_dir, "COMP.mp4")
-                                    subprocess.run([
-                                        ffmpeg_exe, '-y', '-i', out_mp4, '-c:v', 'libx264', '-preset', 'ultrafast',
-                                        '-crf', '26', '-threads', '1', '-c:a', 'aac', '-b:a', '128k', '-movflags', '+faststart', comp_mp4
-                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-                                    if os.path.exists(comp_mp4) and os.path.getsize(comp_mp4) > 5000:
-                                        os.remove(out_mp4)
-                                        out_mp4 = comp_mp4
-
-                                if master_custom_audio is not None and os.path.exists(out_mp4):
-                                    master_custom_audio.seek(0)
-                                    custom_aud_path = os.path.join(work_dir, "loc" + os.path.splitext(master_custom_audio.name)[1])
-                                    with open(custom_aud_path, "wb") as fa:
-                                        shutil.copyfileobj(master_custom_audio, fa)
-                                    dubbed_mp4 = os.path.join(work_dir, "VOZ.mp4")
-                                    if subprocess.run([
-                                        ffmpeg_exe, '-y', '-i', out_mp4, '-i', custom_aud_path, '-map', '0:v:0', '-map', '1:a:0',
-                                        '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-shortest', '-movflags', '+faststart', dubbed_mp4
-                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(dubbed_mp4):
-                                        os.remove(out_mp4)
-                                        out_mp4 = dubbed_mp4
-
-                                if bg_music_file is not None and os.path.exists(out_mp4):
-                                    bg_music_file.seek(0)
-                                    bgm_path = os.path.join(work_dir, "bgm" + os.path.splitext(bg_music_file.name)[1])
-                                    with open(bgm_path, "wb") as fb:
-                                        shutil.copyfileobj(bg_music_file, fb)
-                                    bgm_out_mp4 = os.path.join(work_dir, "BGM.mp4")
-                                    vol_float = round(bgm_vol_pct / 100.0, 3)
-                                    if subprocess.run([
-                                        ffmpeg_exe, '-y', '-i', out_mp4, '-stream_loop', '-1', '-i', bgm_path,
-                                        '-filter_complex', f"[1:a]volume={vol_float}[bgm];[0:a][bgm]amix=inputs=2:duration=first:dropout_transition=2[aout]",
-                                        '-map', '0:v:0', '-map', '[aout]', '-c:v', 'copy', '-c:a', 'aac', '-b:a', '160k', '-movflags', '+faststart', bgm_out_mp4
-                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(bgm_out_mp4):
-                                        os.remove(out_mp4)
-                                        out_mp4 = bgm_out_mp4
-
-                                if burn_subs and srt_content.strip() and os.path.exists(out_mp4):
-                                    subbed_mp4 = os.path.join(work_dir, "SUB.mp4")
-                                    srt_escaped = srt_file_path.replace("\\", "/").replace(":", "\\:")
-                                    f_size = 15 if is_vertical else 18
-                                    margin_v = 55 if is_vertical else 28
-                                    sub_filter = f"subtitles='{srt_escaped}':force_style='Fontsize={f_size},PrimaryColour=&H00FFFFFF,OutlineColour=&H00000000,BorderStyle=1,Outline=2,Shadow=1,Alignment=2,MarginV={margin_v}'"
-                                    if subprocess.run([
-                                        ffmpeg_exe, '-y', '-i', out_mp4, '-vf', sub_filter, '-c:v', 'libx264', '-preset', 'ultrafast',
-                                        '-crf', '25', '-threads', '1', '-c:a', 'copy', '-movflags', '+faststart', subbed_mp4
-                                    ], stdout=subprocess.PIPE, stderr=subprocess.PIPE).returncode == 0 and os.path.exists(subbed_mp4):
-                                        os.remove(out_mp4)
-                                        out_mp4 = subbed_mp4
-
-                                p_bar.progress(1.0, text="Concluído!")
-                                if os.path.exists(out_mp4) and os.path.getsize(out_mp4) > 5000:
-                                    prev_file = st.session_state.get("final_video_disk_path", "")
-                                    if prev_file and os.path.exists(prev_file):
-                                        try:
-                                            os.remove(prev_file)
-                                        except Exception:
-                                            pass
-                                    fname_only = f"VIDEO_FINAL_{uuid.uuid4().hex[:10]}.mp4"
-                                    safe_final_path = os.path.join(static_delivery_dir, fname_only)
-                                    shutil.move(out_mp4, safe_final_path)
-                                    st.session_state["final_video_disk_path"] = safe_final_path
-                                    st.session_state["final_video_static_url"] = f"app/static/entregas/{fname_only}"
-                                    st.session_state["final_srt_text"] = srt_content
-                                    st.session_state["uploader_reset_id"] += 1
-                                    gc.collect()
-                                    st.rerun()
-                    finally:
-                        shutil.rmtree(work_dir, ignore_errors=True)
-                        gc.collect()
-
-        final_disk_p = st.session_state.get("final_video_disk_path", "")
-        if final_disk_p and os.path.exists(final_disk_p):
-            size_mb = os.path.getsize(final_disk_p) / (1024 * 1024)
-            static_rel_url = st.session_state.get("final_video_static_url", "")
-            st.success(f"✅ VÍDEO PRONTO NA NUVEM! ({size_mb:.1f} MB)")
-            dl_c1, dl_c2 = st.columns([2, 1])
-            with dl_c1:
-                st.markdown(
-                    f'''<a href="{static_rel_url}" download="VIDEO_FINAL_COMPLETO.mp4" target="_blank"
-                    style="display:block;text-align:center;background:#16a34a;color:#ffffff;padding:13px 18px;
-                    border-radius:8px;font-weight:700;text-decoration:none;font-size:15px;">
-                    ⚡ BAIXAR VÍDEO DIRETO DO DISCO ({size_mb:.1f} MB)
-                    </a>''',
-                    unsafe_allow_html=True
-                )
-            with dl_c2:
-                if st.session_state.get("final_srt_text"):
-                    st.download_button(
-                        "📝 BAIXAR LEGENDA (.SRT)",
-                        data=st.session_state["final_srt_text"],
-                        file_name="Legenda_Sincronizada.srt",
-                        mime="text/plain",
-                        use_container_width=True
-                    )
-
-with tab3:
-    st.subheader("🚀 Kit Completo de Publicação Viral (Títulos, Descrição SEO, Tags & Capa)")
-    st.caption("Gera automaticamente os metadados prontos para copiar e colar no YouTube, TikTok, Reels ou Shorts.")
-
-    seo_topic = st.text_input("Tema ou Título Base do Projeto:", value=video_title if 'video_title' in locals() else "", placeholder="Ex: Juiz de Fora vs Uberlândia: Qual a Verdadeira Capital do Interior?")
-    seo_script_ref = st.text_area("Roteiro de Referência:", value=st.session_state.get("saved_script", ""), height=180)
-
-    if st.button("✨ GERAR TÍTULOS VIRAIS, DESCRIÇÃO COM CAPÍTULOS, TAGS E PROMPT DE CAPA", type="primary", use_container_width=True):
-        if not seo_topic.strip() and not seo_script_ref.strip():
-            st.warning("Gere um roteiro na Aba 1 ou digite o tema acima primeiro.")
-        else:
-            with st.spinner("Criando estratégia de alto CTR, SEO e prompt da capa..."):
-                combined_dna = (
-                    f"Char A: {st.session_state.get('dna_char_a', '')} | Char B: {st.session_state.get('dna_char_b', '')}"
-                    if "Modo 2" in audio_mode else (st.session_state.get("dna_single_char", "") or st.session_state.get("auto_cast_dna", "Period-accurate cinematic visual"))
-                )
-                kit_txt, err_seo = generate_seo_and_thumbnail_kit(
-                    seo_topic, seo_script_ref, selected_lang, aspect_ratio, style_choice, combined_dna, active_api_key
-                )
-                if err_seo:
-                    st.error(err_seo)
-                else:
-                    st.session_state["seo_kit_output"] = kit_txt
-                    st.success("✅ Kit de publicação gerado com sucesso!")
-
-    if st.session_state.get("seo_kit_output"):
-        st.markdown("---")
-        st.markdown(st.session_state["seo_kit_output"])
-        st.download_button(
-            "📥 Baixar Kit Completo de Publicação (.TXT)",
-            data=st.session_state["seo_kit_output"],
-            file_name="Kit_Publicacao_SEO_Thumbnail.txt",
-            use_container_width=True
-        )
-# FIM DO ARQUIVO SAAS ULTIMATE v3.2 COMPLETO (FIX WIDGET SYNC + MODO 3 1:1 + ANTI-CLONE)
+  <label class="lbl">📜 Roteiro Completo OU conteúdo de <code>Prompts_Flow.txt</code> (Colar o <code>
