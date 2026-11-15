@@ -120,10 +120,17 @@ for k_def, v_def in {
     "voice_char_a": DEFAULT_VOICE_A,
     "voice_char_b": DEFAULT_VOICE_B,
     "uploader_reset_id": 0,
-    "custom_audio_1to1_lock": False
+    "custom_audio_1to1_lock": False,
+    "_pending_cast_sync": {}
 }.items():
     if k_def not in st.session_state:
         st.session_state[k_def] = v_def
+
+# Aplica atualizações pendentes ANTES de qualquer widget ser instanciado na página!
+if st.session_state.get("_pending_cast_sync"):
+    for _pk, _pv in st.session_state["_pending_cast_sync"].items():
+        st.session_state[_pk] = _pv
+    st.session_state["_pending_cast_sync"] = {}
 
 LANGUAGES = {
     "🇧🇷 Português (Brasil)": {
@@ -162,7 +169,6 @@ LANGUAGES = {
     }
 }
 
-# Presets blindados sem marcas registradas que disparam falso filtro de "pessoas famosas" no Google Veo
 STYLE_PRESETS = {
     "Cinematográfico Realista 4K": (
         "Photorealistic 4K cinema footage, natural cinematic lighting, strictly period-accurate wardrobe and setting, single continuous camera shot, zero text or signs on screen."
@@ -317,7 +323,6 @@ def build_chrome_extension_zip():
     return mem_zip.getvalue()
 
 def sanitize_visual_for_veo_safety(vis_en):
-    """Evita falsos positivos de 'pessoas famosas' ou marcas registradas no Google Veo."""
     if not vis_en:
         return ""
     s = vis_en
@@ -332,7 +337,6 @@ def fix_pronunciation(text, lang_label):
         return ""
     t = text.strip()
     if "Português" in lang_label:
-        # Converte palavras longas em CAPS LOCK (ex: JUIZ DE FORA -> Juiz de Fora) para o Veo não soletrar como sigla!
         known_acronyms = {"IBGE", "UFJF", "UFU", "UFMG", "UFV", "UFSJ", "IDH", "PIB", "ONU", "EUA", "SUS", "CPF", "CNPJ"}
         def _decap(m):
             w = m.group(0)
@@ -614,10 +618,6 @@ def get_media_duration_sec(media_path, ffmpeg_exe):
     return get_audio_duration_sec(media_path, ffmpeg_exe)
 
 def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api_key, ffmpeg_exe):
-    """
-    Fatia matematicamente o áudio enviado de 8.0 em 8.0 segundos (sincronia 1-para-1 cravada!).
-    Usa Groq Whisper Turbo (ultra-rápido e pontuado) se houver chave gsk_, com fallback automático para Google SR.
-    """
     dur = get_audio_duration_sec(audio_path, ffmpeg_exe)
     num_chunks = max(1, math.ceil(dur / 8.0))
     clean_key = api_key.strip() if api_key else ""
@@ -625,7 +625,6 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api
     blocks = []
 
     try:
-        # Caminho 1: Transcrição em alta precisão com timestamps exatos via Groq Whisper Turbo
         if clean_key.startswith("gsk_"):
             wav_full = os.path.join(work_dir, "full_16k.wav")
             subprocess.run(
@@ -670,7 +669,6 @@ def transcribe_uploaded_audio_chunks(audio_path, sr_lang_code, whisper_lang, api
                             blocks.append(f"[{t1} - {t2}]\nLOCUÇÃO: {re.sub(r'\\s+', ' ', spoken_piece)}")
                         return "\n\n".join(blocks), dur, num_chunks
 
-        # Caminho 2 (Fallback): Google SpeechRecognition fatia por fatia de 8s
         import speech_recognition as sr
         recognizer = sr.Recognizer()
         for i in range(num_chunks):
@@ -709,7 +707,6 @@ def generate_auto_cast_dna(topic, raw_script_sample, style_choice, api_key):
     return sanitize_visual_for_veo_safety(re.sub(r'[\r\n"]+', ' ', out).strip())
 
 def auto_adapt_dialogue_cast(topic, style_choice, api_key):
-    """Adapta automaticamente Personagem A e B (aparência + voz) ao tema quando o usuário está no Modo 2."""
     clean_key = api_key.strip() if api_key else ""
     if not clean_key or not topic.strip():
         return None
@@ -909,7 +906,6 @@ def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=Fals
             return direct_scenes
 
     pre = raw_script.strip()
-    # Garante separação ANTES de cada novo timestamp ou [CENA:], mas COLA [CENA:] na fala seguinte (evita cena muda ""!)
     pre = re.sub(r'(?<!^)\n*(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])', r'\n\n\1', pre)
     pre = re.sub(r'(\[\d{1,2}:\d{2}\s*-\s*\d{1,2}:\d{2}\])\s*\n+\s*', r'\1\n', pre)
     pre = re.sub(r'(?<!\]\n)\n*(\[(?:CENA|SCENE)\s*:)', r'\n\n\1', pre, flags=re.IGNORECASE)
@@ -968,7 +964,6 @@ def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=Fals
 
         full_spoken = " ".join(p for p in spoken_parts if p).strip()
 
-        # Se um bloco tinha só [CENA:] sem fala, guarda o visual para colar no próximo bloco em vez de gerar fala vazia ""!
         if not full_spoken and visual and not allow_empty_speech:
             pending_orphan_visual = visual
             continue
@@ -976,7 +971,6 @@ def extract_scenes_for_prompts(raw_script, lang_label, preserve_1to1_blocks=Fals
         if not full_spoken and not visual:
             continue
 
-        # No Modo 3 (Áudio Próprio gravado), preserva exatamente 1 bloco = 1 cena de 8s para sincronia matemática 1:1!
         if preserve_1to1_blocks:
             chunks = [full_spoken] if full_spoken else [""]
         else:
@@ -1082,12 +1076,12 @@ def enrich_scenes_with_ai_visuals(scenes, topic_hint, style_choice, audio_mode, 
     return scenes
 # ===================================================================================
 
-# ================= MOTOR LOCAL FFMPEG.WASM v3.1 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
+# ================= MOTOR LOCAL FFMPEG.WASM v3.2 (ANTI-CLONE DE TAKES REPETIDOS + 1 VIDEO UNICO) =================
 FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
 <meta charset="UTF-8" />
-<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.1</title>
+<title>Estúdio Pro — Montador Local FFmpeg.wasm v3.2</title>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
 <script src="https://cdn.jsdelivr.net/npm/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js" onerror="var s=document.createElement('script');s.src='https://unpkg.com/@ffmpeg/ffmpeg@0.11.6/dist/ffmpeg.min.js';document.head.appendChild(s);"></script>
 <style>
@@ -1125,14 +1119,14 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
 <div class="card">
   <div class="top-row">
     <div>
-      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.1 (Sincronia 1:1 + Anti-Takes Repetidos)</strong>
+      <strong style="font-size:16px;color:#60a5fa;">⚡ Montador Local FFmpeg.wasm v3.2 (Sincronia 1:1 + Anti-Takes Repetidos)</strong>
       <div style="font-size:12px;color:#94a3b8;margin-top:2px;">
         Elimina takes duplicados, sincroniza sua própria locução e une <b>950 MB+</b> num único <code>.MP4</code>!
         Cenas no roteiro: <b id="sc-count-lbl" style="color:#34d399;">0 cenas</b>.
       </div>
     </div>
     <div style="display:flex;gap:8px;align-items:center;">
-      <span class="badge">v3.1 Blindado</span>
+      <span class="badge">v3.2 Estável</span>
       <button class="btn-sec" id="open-tab-btn" title="Abre em aba exclusiva com 4GB de RAM dedicados do Chrome">🖥️ Abrir em Aba Dedicada (+RAM)</button>
     </div>
   </div>
@@ -1170,7 +1164,7 @@ FFMPEG_WASM_HTML_TEMPLATE = r"""<!DOCTYPE html>
     <div>
       <label class="lbl">🧭 3. Como ordenar e filtrar os clipes no navegador?</label>
       <select id="sel-sort">
-        <option value="whisper">🗣️ Pareamento IA por Voz v3.1 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
+        <option value="whisper">🗣️ Pareamento IA por Voz v3.2 (Escolhe Melhor Take + Elimina Clones Fora de Hora)</option>
         <option value="chron_flow">🕒 Ordem de Geração do Flow / Nome (Para vídeos gerados mudos)</option>
         <option value="alpha">🔢 Ordem Alfabética Pura dos Nomes</option>
       </select>
@@ -2047,7 +2041,7 @@ document.getElementById("btn-run").addEventListener("click", async () => {
     const sumMB = partBlobs.reduce((acc, b) => acc + b.blob.size, 0) / 1048576;
 
     document.getElementById("dl-summary").innerText =
-      `✅ MONTAGEM v3.1 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
+      `✅ MONTAGEM v3.2 CONCLUÍDA! ${orderedClips.length} cenas únicas (${sumMB.toFixed(1)} MB)` +
       (discardedCount > 0 ? ` | 🧹 ${discardedCount} take(s) repetido(s)/mudo(s) eliminado(s)!` : "");
 
     document.getElementById("dl-missing").innerText = missingScenes.length
@@ -2256,7 +2250,7 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
                 max_sc, max_s = score, s_idx
             candidate_pairs.append((score, c_idx, s_idx))
 
-        best_per_clip[cIdx if 'cIdx' in locals() else c_idx] = (max_s, max_sc)
+        best_per_clip[c_idx] = (max_s, max_sc)
 
     candidate_pairs.sort(key=lambda x: x[0], reverse=True)
 
@@ -2316,7 +2310,7 @@ def assign_clips_to_scenes_exclusively(clips_info, raw_script, lang_label, drop_
 is_admin = (st.session_state.get("user_role") == "admin")
 col_hdr1, col_hdr2 = st.columns([5, 1])
 with col_hdr1:
-    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.1 & SEO")
+    st.title("🎬 Estúdio Pro Ultimate — Vídeos 16:9 & 9:16, FFmpeg.wasm v3.2 & SEO")
 with col_hdr2:
     st.caption(f"👤 `{st.session_state.get('user_email', '')}`")
     if st.button("🔒 Sair", use_container_width=True):
@@ -2375,7 +2369,7 @@ with col_top3:
 
 tab1, tab2, tab3 = st.tabs([
     "📝 1. Personagens, Roteiro & Prompts",
-    "⚡ 2. Montagem Local FFmpeg.wasm v3.1 (Zero Repetições)",
+    "⚡ 2. Montagem Local FFmpeg.wasm v3.2 (Zero Repetições)",
     "🚀 3. Kit Publicação Viral (Títulos, SEO & Capa)"
 ])
 
@@ -2539,27 +2533,28 @@ with tab1:
                 st.warning("Digite o tema ou situação primeiro.")
             else:
                 st.session_state["custom_audio_1to1_lock"] = False
-                # Se estiver no Modo 2 com campos vazios OU ainda no exemplo padrão Pai/Filha, adapta automaticamente ao tema!
-                cur_a = st.session_state.get("dna_char_a", "").strip()
-                cur_b = st.session_state.get("dna_char_b", "").strip()
+                eff_a = st.session_state.get("dna_char_a", "").strip()
+                eff_b = st.session_state.get("dna_char_b", "").strip()
+
                 if "Modo 2" in audio_mode and not has_ref_image and (
-                    not cur_a or not cur_b or (cur_a == DEFAULT_CHAR_A and cur_b == DEFAULT_CHAR_B)
+                    not eff_a or not eff_b or (eff_a == DEFAULT_CHAR_A and eff_b == DEFAULT_CHAR_B)
                 ):
                     with st.spinner(f"🎭 Criando ficha física e vocal dos personagens de '{video_title}'..."):
                         adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
                         if adapted:
-                            st.session_state["dna_char_a"] = adapted["DNA_A"]
-                            st.session_state["dna_char_b"] = adapted["DNA_B"]
+                            eff_a = adapted["DNA_A"]
+                            eff_b = adapted["DNA_B"]
+                            sync_dict = {"dna_char_a": eff_a, "dna_char_b": eff_b}
                             if "VOICE_A" in adapted:
-                                st.session_state["voice_char_a"] = adapted["VOICE_A"]
+                                sync_dict["voice_char_a"] = adapted["VOICE_A"]
                             if "VOICE_B" in adapted:
-                                st.session_state["voice_char_b"] = adapted["VOICE_B"]
+                                sync_dict["voice_char_b"] = adapted["VOICE_B"]
+                            st.session_state["_pending_cast_sync"] = sync_dict
 
                 with st.spinner(f"Criando roteiro linear cronológico ({total_scenes_calc} cenas)..."):
                     script_out, err_msg = generate_ai_script(
                         video_title, total_scenes_calc, selected_lang, style_choice, audio_mode, aspect_short,
-                        st.session_state.get("dna_char_a", ""), st.session_state.get("dna_char_b", ""),
-                        st.session_state.get("dna_single_char", ""), active_api_key
+                        eff_a, eff_b, st.session_state.get("dna_single_char", ""), active_api_key
                     )
                     if err_msg:
                         st.error(err_msg)
@@ -2596,20 +2591,28 @@ with tab1:
                 allow_empty_speech=is_silent_custom
             )
 
-            # Se estiver no Modo 2 e o usuário apagou os personagens manualmente, gera automaticamente pelo tema!
+            eff_dna_a = st.session_state.get("dna_char_a", "").strip()
+            eff_dna_b = st.session_state.get("dna_char_b", "").strip()
+            eff_voice_a = st.session_state.get("voice_char_a", "").strip()
+            eff_voice_b = st.session_state.get("voice_char_b", "").strip()
+
             if "Modo 2" in audio_mode and video_title.strip() and active_api_key:
-                ca_now = st.session_state.get("dna_char_a", "").strip()
-                cb_now = st.session_state.get("dna_char_b", "").strip()
-                if not ca_now or not cb_now:
+                if not eff_dna_a or not eff_dna_b or (not has_ref_image and eff_dna_a == DEFAULT_CHAR_A and eff_dna_b == DEFAULT_CHAR_B):
                     with st.spinner(f"🎭 Preenchendo aparência e vozes fiéis à época para '{video_title}'..."):
                         adapted = auto_adapt_dialogue_cast(video_title.strip(), style_choice, active_api_key)
                         if adapted:
-                            st.session_state["dna_char_a"] = adapted["DNA_A"]
-                            st.session_state["dna_char_b"] = adapted["DNA_B"]
+                            eff_dna_a = adapted["DNA_A"]
+                            eff_dna_b = adapted["DNA_B"]
                             if "VOICE_A" in adapted:
-                                st.session_state["voice_char_a"] = adapted["VOICE_A"]
+                                eff_voice_a = adapted["VOICE_A"]
                             if "VOICE_B" in adapted:
-                                st.session_state["voice_char_b"] = adapted["VOICE_B"]
+                                eff_voice_b = adapted["VOICE_B"]
+                            st.session_state["_pending_cast_sync"] = {
+                                "dna_char_a": eff_dna_a,
+                                "dna_char_b": eff_dna_b,
+                                "voice_char_a": eff_voice_a,
+                                "voice_char_b": eff_voice_b
+                            }
 
             effective_char_lock = st.session_state.get("dna_single_char", "").strip()
             if not effective_char_lock and "Modo 2" not in audio_mode and auto_director_enabled and active_api_key:
@@ -2655,14 +2658,12 @@ with tab1:
                     is_a = (sc["speaker"] != "B")
                     active_char = "Character A" if is_a else "Character B"
                     silent_char = "Character B" if is_a else "Character A"
-                    active_voice = (st.session_state.get("voice_char_a", "") if is_a else st.session_state.get("voice_char_b", "")).strip() or "expressive native voice"
-                    dna_a_txt = st.session_state.get("dna_char_a", "").strip()
-                    dna_b_txt = st.session_state.get("dna_char_b", "").strip()
+                    active_voice = (eff_voice_a if is_a else eff_voice_b) or "expressive native voice"
                     cast_prefix = ""
-                    if dna_a_txt:
-                        cast_prefix += f"Character A: {dna_a_txt}. "
-                    if dna_b_txt:
-                        cast_prefix += f"Character B: {dna_b_txt}. "
+                    if eff_dna_a:
+                        cast_prefix += f"Character A: {eff_dna_a}. "
+                    if eff_dna_b:
+                        cast_prefix += f"Character B: {eff_dna_b}. "
                     raw_p = (
                         f"{aspect_short}. {visual_anchor} {ref_tag}{cast_prefix}"
                         f"Scene action: {safe_vis}. ONLY {active_char} moves mouth with natural lip-sync while {silent_char} listens silently. "
@@ -2704,7 +2705,7 @@ with tab2:
     engine_choice = st.radio(
         "⚙️ Escolha onde processar os vídeos:",
         [
-            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.1 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
+            "⚡ Modo Local no Navegador — FFmpeg.wasm v3.2 (Para .ZIP Gigantes de 300MB a 2GB+ — Zero Takes Repetidos!)",
             "☁️ Modo Nuvem Servidor (Para pacotes menores até ~180MB)"
         ],
         index=0
@@ -2742,7 +2743,7 @@ with tab2:
             sort_method = st.radio(
                 "Como ordenar os clipes antes de juntar?",
                 [
-                    "🗣️ Pareamento Exclusivo v3.1 Anti-Duplicatas",
+                    "🗣️ Pareamento Exclusivo v3.2 Anti-Duplicatas",
                     "🔢 Ordenar apenas pelo nome dos arquivos"
                 ]
             )
@@ -3012,4 +3013,4 @@ with tab3:
             file_name="Kit_Publicacao_SEO_Thumbnail.txt",
             use_container_width=True
         )
-# FIM DO ARQUIVO SAAS ULTIMATE v3.1 COMPLETO (MODO 2 AUTO-ELENCO + MODO 3 SINCRONIA 1:1 + ANTI-BLOQUEIO VEO)
+# FIM DO ARQUIVO SAAS ULTIMATE v3.2 COMPLETO (FIX WIDGET SYNC + MODO 3 1:1 + ANTI-CLONE)
